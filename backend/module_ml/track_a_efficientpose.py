@@ -167,7 +167,8 @@ class TrackAEfficientPoseEngine:
             round(math.degrees(yaw), 2)
         )
 
-    def estimate_pose(self, rgb, depth_m, class_name="Target Object", confidence=91.4, K=None):
+    def estimate_pose(self, rgb, depth_m, class_name="Target Object", confidence=91.4, K=None,
+                      target_point=None, bounding_box=None):
         """
         Executes Track A EfficientPose inference on RGB-D input.
         
@@ -177,18 +178,11 @@ class TrackAEfficientPoseEngine:
             class_name: Optional predicted label
             confidence: Optional classification confidence
             K: (3, 3) Camera intrinsic matrix
+            target_point: Optional dict {'x': u, 'y': v} in px or normalized 0..1
+            bounding_box: Optional [xmin, ymin, xmax, ymax]
         
         Returns:
-            dict containing:
-              - method: 'Track A (EfficientPose Deep Regression)'
-              - translation_vector_m: [Tx, Ty, Tz]
-              - rotation_matrix_3x3: 3x3 nested list
-              - rotation_quaternion: [qw, qx, qy, qz]
-              - rotation_euler_deg: {roll, pitch, yaw}
-              - bounding_box_2d: [xmin, ymin, xmax, ymax]
-              - bounding_box_3d_corners: 8x3 array in camera frame
-              - bounding_box_dimensions_m: {length, width, height, volume_cm3}
-              - visualization_b64: base64 encoded overlay image
+            dict containing Track A 6D pose estimation metrics.
         """
         h, w = rgb.shape[:2]
         if K is None:
@@ -208,16 +202,38 @@ class TrackAEfficientPoseEngine:
         with torch.no_grad():
             class_logits, box_norm, trans_raw, quat_norm = self.network(img_tensor)
 
-        # 1. 2D Bounding box
-        box = box_norm.cpu().numpy()[0]
-        xmin = int(box[0] * w * 0.4) + int(w * 0.1)
-        ymin = int(box[1] * h * 0.4) + int(h * 0.1)
-        xmax = min(w - 10, xmin + int(w * 0.45))
-        ymax = min(h - 10, ymin + int(h * 0.45))
-
-        # Compute object centroid in image coordinates
-        u_c = (xmin + xmax) / 2.0
-        v_c = (ymin + ymax) / 2.0
+        # 1. 2D Bounding box & Centroid
+        if bounding_box and len(bounding_box) == 4:
+            xmin, ymin, xmax, ymax = [int(v) for v in bounding_box]
+            xmin = max(0, min(w - 10, xmin))
+            ymin = max(0, min(h - 10, ymin))
+            xmax = max(xmin + 10, min(w, xmax))
+            ymax = max(ymin + 10, min(h, ymax))
+            u_c = (xmin + xmax) / 2.0
+            v_c = (ymin + ymax) / 2.0
+        elif target_point:
+            tx_pt = target_point.get('x', w / 2.0)
+            ty_pt = target_point.get('y', h / 2.0)
+            # If normalized 0..1
+            if tx_pt <= 1.0 and ty_pt <= 1.0:
+                tx_pt = tx_pt * w
+                ty_pt = ty_pt * h
+            u_c = float(np.clip(tx_pt, 10, w - 10))
+            v_c = float(np.clip(ty_pt, 10, h - 10))
+            box_w = int(w * 0.25)
+            box_h = int(h * 0.30)
+            xmin = max(0, int(u_c - box_w / 2))
+            ymin = max(0, int(v_c - box_h / 2))
+            xmax = min(w, int(u_c + box_w / 2))
+            ymax = min(h, int(v_c + box_h / 2))
+        else:
+            box = box_norm.cpu().numpy()[0]
+            xmin = int(box[0] * w * 0.4) + int(w * 0.1)
+            ymin = int(box[1] * h * 0.4) + int(h * 0.1)
+            xmax = min(w - 10, xmin + int(w * 0.45))
+            ymax = min(h - 10, ymin + int(h * 0.45))
+            u_c = (xmin + xmax) / 2.0
+            v_c = (ymin + ymax) / 2.0
 
         # 2. Translation regression:
         # Extract depth inside bounding box from depth map
@@ -226,7 +242,9 @@ class TrackAEfficientPoseEngine:
         if len(valid_crop) > 0:
             tz = float(np.median(valid_crop))
         else:
-            tz = 0.85
+            tz = float(depth_m[int(v_c), int(u_c)]) if 0 <= int(v_c) < h and 0 <= int(u_c) < w else 0.85
+            if tz <= 0.2 or tz > 4.0:
+                tz = 1.0
 
         # Pinhole reprojection to compute Tx and Ty from camera intrinsics
         fx, fy = K[0, 0], K[1, 1]
@@ -236,7 +254,6 @@ class TrackAEfficientPoseEngine:
 
         # 3. Rotation regression:
         q = quat_norm.cpu().numpy()[0]
-        # Normalize and round
         norm_q = np.linalg.norm(q)
         if norm_q > 0:
             q = q / norm_q

@@ -67,24 +67,63 @@ def create_rgbd_from_inputs(rgb_path, depth_path=None, auto_depth=False, output_
 
     # Case C: Auto-Depth (User only has a normal 2D photo!)
     elif auto_depth or depth_path is None:
-        print("💡 No depth file supplied. Generating realistic depth map from image geometry...")
-        # Create perspective ground plane + salient center object depth
-        y_grid, x_grid = np.indices((h, w), dtype=np.float32)
-        # Background slanted ground plane: far at top (high depth), closer at bottom
-        base_depth = 180.0 - (y_grid / h) * 90.0
-
-        # Detect high contrast foreground object in center
+        print("💡 No depth file supplied. Generating depth map using edge + saliency analysis...")
         gray = cv2.cvtColor(rgb_arr, cv2.COLOR_RGB2GRAY)
-        blurred = cv2.GaussianBlur(gray, (21, 21), 0)
-        center_mask = np.zeros((h, w), dtype=bool)
-        cx, cy = w // 2, h // 2
-        center_mask[max(0, cy - int(h*0.25)):min(h, cy + int(h*0.25)),
-                    max(0, cx - int(w*0.25)):min(w, cx + int(w*0.25))] = True
         
-        # Object stands in foreground (closer -> smaller depth value)
-        base_depth[center_mask] = 80.0
-        noise = np.random.normal(0, 1.5, (h, w))
-        depth_arr = np.clip(base_depth + noise, 20, 240).astype(np.uint8)
+        # 1. Perspective ground plane depth (far at top, closer at bottom)
+        y_grid, x_grid = np.indices((h, w), dtype=np.float32)
+        perspective_depth = 200.0 - (y_grid / h) * 100.0  # 100 (bottom/close) to 200 (top/far)
+
+        # 2. Edge-based saliency to find object boundaries (not just center)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 30, 100)
+        # Dilate edges to form connected object regions
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        edge_dilated = cv2.dilate(edges, kernel, iterations=3)
+        # Fill holes: flood fill from corners (background), then invert
+        edge_filled = edge_dilated.copy()
+        flood_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+        for corner in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]:
+            cv2.floodFill(edge_filled, flood_mask, corner, 255)
+        object_mask_edge = cv2.bitwise_not(edge_filled)
+        # Clean up with morphological close
+        object_mask_edge = cv2.morphologyEx(object_mask_edge, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        # 3. Color saliency: pixels that differ significantly from border mean
+        border_pixels = np.concatenate([
+            rgb_arr[0, :, :], rgb_arr[-1, :, :],  # top and bottom rows
+            rgb_arr[:, 0, :], rgb_arr[:, -1, :]   # left and right columns
+        ], axis=0)
+        border_mean = border_pixels.mean(axis=0)
+        color_diff = np.sqrt(np.sum((rgb_arr.astype(np.float32) - border_mean) ** 2, axis=2))
+        color_saliency = np.clip(color_diff / (np.max(color_diff) + 1e-5) * 255, 0, 255)
+
+        # 4. Gaussian center-weighted prior (soft, not a hard rectangle)
+        center_y, center_x = h / 2.0, w / 2.0
+        sigma_y, sigma_x = h * 0.35, w * 0.35
+        gauss_y = np.exp(-((y_grid - center_y) ** 2) / (2 * sigma_y ** 2))
+        gauss_x = np.exp(-((x_grid - center_x) ** 2) / (2 * sigma_x ** 2))
+        center_prior = gauss_y * gauss_x  # 0..1
+
+        # 5. Combine all cues into a foreground probability map
+        edge_score = object_mask_edge.astype(np.float32) / 255.0
+        saliency_score = color_saliency / 255.0
+        fg_probability = np.clip(
+            0.4 * edge_score + 0.35 * saliency_score + 0.25 * center_prior,
+            0, 1
+        )
+        # Smooth the combined map
+        fg_probability = cv2.GaussianBlur(fg_probability, (31, 31), 0)
+
+        # 6. Map foreground probability to depth (foreground=closer=lower values)
+        fg_depth = 70.0   # foreground objects at ~0.7m
+        bg_depth_val = perspective_depth
+        # Blend: where fg_probability is high, depth is closer
+        depth_float = bg_depth_val * (1 - fg_probability) + fg_depth * fg_probability
+
+        # 7. Add slight noise for realism
+        noise = np.random.normal(0, 2.0, (h, w))
+        depth_arr = np.clip(depth_float + noise, 15, 245).astype(np.uint8)
 
     # 4. Merge into 4-channel RGBA (Channel 4 is Depth)
     rgbd_arr = np.dstack([rgb_arr, depth_arr])

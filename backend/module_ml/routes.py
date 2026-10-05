@@ -3,6 +3,7 @@ Module ML — API Routes
 Inference, training, model status, and visualization endpoints.
 """
 import os
+import uuid as _uuid
 from flask import Blueprint, request, jsonify, current_app, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from module_ml.model_trainer import ModelTrainer
@@ -12,7 +13,69 @@ from module_ml.forensic_analyzer import ForensicAnalyzer
 from module_ml.pose_estimator import PoseEstimator
 from module_auth.middleware import log_activity
 
+# ── HEIC/HEIF support: register opener so PIL handles .heic everywhere ──────
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
+
 ml_bp = Blueprint('ml', __name__)
+
+# Allowed upload extensions (lowercase)
+_ALLOWED_IMAGE_EXTS = {'jpg', 'jpeg', 'png', 'tiff', 'tif', 'bmp', 'webp', 'heic', 'heif', 'pdf'}
+
+
+def _sanitize_for_json(val):
+    """Recursively converts NumPy scalars/arrays and non-serializable objects to native Python."""
+    if isinstance(val, dict):
+        return {str(k): _sanitize_for_json(v) for k, v in val.items()}
+    elif isinstance(val, (list, tuple, set)):
+        return [_sanitize_for_json(x) for x in val]
+    elif hasattr(val, 'item'):
+        return val.item()
+    elif hasattr(val, 'tolist'):
+        return val.tolist()
+    return val
+
+
+def _save_upload(file_storage, upload_dir, prefix=''):
+    """
+    Save a werkzeug FileStorage object to *upload_dir*.
+
+    Supports JPG, PNG, HEIC/HEIF, and PDF (containing RGB images).
+    Inspects magic bytes if extension is unknown or mismatched.
+
+    Returns:
+        (saved_path, ext)  — absolute path and lowercase extension
+    """
+    os.makedirs(upload_dir, exist_ok=True)
+    raw_name = file_storage.filename or 'upload'
+    ext = raw_name.rsplit('.', 1)[-1].lower() if '.' in raw_name else ''
+
+    # Check magic bytes for reliable extension determination
+    header = b''
+    try:
+        header = file_storage.stream.read(32)
+        file_storage.stream.seek(0)
+    except Exception:
+        pass
+
+    if header.startswith(b'%PDF'):
+        ext = 'pdf'
+    elif header.startswith(b'\x89PNG'):
+        ext = 'png'
+    elif header.startswith(b'\xff\xd8\xff'):
+        ext = 'jpg'
+    elif b'ftyp' in header and any(b in header for b in (b'heic', b'mif1', b'msf1', b'heix', b'hevc')):
+        ext = 'heic'
+    elif ext not in _ALLOWED_IMAGE_EXTS:
+        ext = 'png'
+
+    filename = f'{prefix}{_uuid.uuid4().hex}.{ext}'
+    path = os.path.join(upload_dir, filename)
+    file_storage.save(path)
+    return path, ext
 
 
 
@@ -130,14 +193,9 @@ def predict():
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
 
-        # Save temporarily
-        import uuid
         upload_dir = current_app.config['UPLOAD_FOLDER']
-        os.makedirs(upload_dir, exist_ok=True)
-        ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else 'png'
-        filename = f'{uuid.uuid4().hex}.{ext}'
-        image_path = os.path.join(upload_dir, filename)
-        file.save(image_path)
+        image_path, _ = _save_upload(file, upload_dir)
+        filename = os.path.basename(image_path)
 
     if not os.path.exists(image_path):
         return jsonify({'error': 'Image file not found'}), 404
@@ -156,10 +214,17 @@ def predict():
         annotated = visualizer.annotate_image(image_path, results['predictions'])
         chart_data = visualizer.generate_confidence_chart_data(results['predictions'])
 
-    # Read original image as base64
+    # Read original image as base64 (supporting JPG, PNG, HEIC, PDF)
     import base64
-    with open(image_path, 'rb') as f:
-        original_b64 = base64.b64encode(f.read()).decode('utf-8')
+    try:
+        from module_data.rgbd_utils import _pil_open_any
+        _orig_pil = _pil_open_any(image_path).convert('RGB')
+        _orig_buf = __import__('io').BytesIO()
+        _orig_pil.save(_orig_buf, format='JPEG', quality=90)
+        original_b64 = base64.b64encode(_orig_buf.getvalue()).decode('utf-8')
+    except Exception:
+        with open(image_path, 'rb') as f:
+            original_b64 = base64.b64encode(f.read()).decode('utf-8')
 
     log_activity(user_id, 'image_analysis', 'ml',
                  f'Analyzed image: {filename}',
@@ -254,11 +319,8 @@ def forensic_analyze():
     if 'image' in request.files:
         file = request.files['image']
         if file.filename != '':
-            import uuid
-            ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else 'png'
-            filename = f'{uuid.uuid4().hex}.{ext}'
-            image_path = os.path.join(upload_dir, filename)
-            file.save(image_path)
+            image_path, _ = _save_upload(file, upload_dir)
+            filename = os.path.basename(image_path)
 
     if not image_path and request.is_json:
         data = request.get_json() or {}
@@ -275,27 +337,70 @@ def forensic_analyze():
             elif os.path.exists(dataset_candidate):
                 image_path = dataset_candidate
 
-
     if 'depth_image' in request.files:
         depth_file = request.files['depth_image']
         if depth_file.filename != '':
-            import uuid
-            ext = depth_file.filename.rsplit('.', 1)[-1].lower() if '.' in depth_file.filename else 'png'
-            depth_filename = f'depth_{uuid.uuid4().hex}.{ext}'
-            depth_path = os.path.join(upload_dir, depth_filename)
-            depth_file.save(depth_path)
+            depth_path, _ = _save_upload(depth_file, upload_dir, prefix='depth_')
+
+    # Handle auto-depth generation if requested and no depth file provided
+    if not depth_path and request.form.get('auto_depth') == 'true' and image_path:
+        try:
+            from convert_depth_to_rgbd import create_rgbd_from_inputs
+            import uuid as uuid_mod
+            auto_rgbd_filename = f'auto_rgbd_{uuid_mod.uuid4().hex}.png'
+            auto_rgbd_path = os.path.join(upload_dir, auto_rgbd_filename)
+            result_path = create_rgbd_from_inputs(
+                image_path, depth_path=None, auto_depth=True, output_path=auto_rgbd_path
+            )
+            if result_path and os.path.exists(result_path):
+                # Use the auto-generated RGBD image instead
+                image_path = result_path
+                filename = auto_rgbd_filename
+        except Exception as e:
+            current_app.logger.warning(f'Auto-depth generation failed: {e}')
 
     if not image_path or not os.path.exists(image_path):
         return jsonify({'error': 'Valid image required for forensic analysis'}), 400
 
     # Run Sherloq Forensic Inspection & RGB-D Verification
     analyzer = ForensicAnalyzer(upload_folder=upload_dir)
-    forensic_results = analyzer.analyze(image_path, depth_image_path=depth_path)
+    try:
+        forensic_results = analyzer.analyze(image_path, depth_image_path=depth_path)
+    except Exception as e:
+        current_app.logger.error(f'Forensic analysis exception: {e}', exc_info=True)
+        return jsonify({'error': f'Forensic analysis failed: {e}'}), 500
 
-    # Read original image base64
+    if forensic_results.get('error'):
+        return jsonify({'error': forensic_results['error']}), 500
+
+    # Detect candidate objects — run whenever we have a valid image
+    # (depth may be embedded in HEIC even if is_rgbd gate wasn't triggered yet)
+    candidate_objects = []
+    gatekeeper = forensic_results.get('rgbd_gatekeeper', {})
+    from module_data.rgbd_utils import is_heic_file
+    has_any_depth = gatekeeper.get('is_rgbd') or depth_path or is_heic_file(image_path) or (
+        forensic_results.get('metadata', {}).get('format') in ('HEIC', 'HEIC / HEIF')
+    )
+    if has_any_depth:
+        try:
+            estimator = PoseEstimator(
+                model_dir=current_app.config['MODEL_FOLDER'],
+                dataset_dir=current_app.config['DATASET_FOLDER'],
+            )
+            candidate_objects = estimator.detect_candidate_objects(image_path, depth_path=depth_path)
+        except Exception as e:
+            current_app.logger.warning(f'Candidate object detection error: {e}')
+
+    # Encode original image as base64 for browser preview (HEIC, PDF, etc. converted to JPEG)
     import base64
-    with open(image_path, 'rb') as f:
-        original_b64 = base64.b64encode(f.read()).decode('utf-8')
+    try:
+        _orig_pil = analyzer._open_image(image_path).convert('RGB')
+        _orig_buf = __import__('io').BytesIO()
+        _orig_pil.save(_orig_buf, format='JPEG', quality=90)
+        original_b64 = base64.b64encode(_orig_buf.getvalue()).decode('utf-8')
+    except Exception:
+        with open(image_path, 'rb') as f:
+            original_b64 = base64.b64encode(f.read()).decode('utf-8')
 
     log_activity(user_id, 'forensic_analysis', 'ml',
                  f'Ran Sherloq Forensics & RGB-D Inspection: {filename}',
@@ -305,18 +410,70 @@ def forensic_analyze():
                      'status': forensic_results.get('rgbd_gatekeeper', {}).get('status'),
                  })
 
-    return jsonify({
+    return jsonify(_sanitize_for_json({
         'forensics': forensic_results,
+        'candidate_objects': candidate_objects,
         'original_image': original_b64,
         'filename': filename or os.path.basename(image_path),
-    }), 200
+    })), 200
+
+
+@ml_bp.route('/detect-objects', methods=['POST'])
+@jwt_required()
+def detect_objects_endpoint():
+    """Returns detected candidate objects and allows resolving click coordinate to specific object."""
+    data = request.get_json() or {}
+    filename = data.get('filename')
+    depth_filename = data.get('depth_filename')
+    click_x_norm = data.get('click_x')
+    click_y_norm = data.get('click_y')
+
+    if not filename:
+        return jsonify({'error': 'Filename required'}), 400
+
+    upload_dir = current_app.config['UPLOAD_FOLDER']
+    image_path = os.path.join(upload_dir, filename)
+    if not os.path.exists(image_path):
+        image_path = os.path.join(upload_dir, 'samples', filename)
+    if not os.path.exists(image_path):
+        image_path = os.path.join(current_app.config['DATASET_FOLDER'], 'images', filename)
+
+    if not os.path.exists(image_path):
+        return jsonify({'error': 'Image file not found'}), 404
+
+    depth_path = None
+    if depth_filename:
+        cand1 = os.path.join(upload_dir, depth_filename)
+        cand2 = os.path.join(upload_dir, 'samples', depth_filename)
+        if os.path.exists(cand1):
+            depth_path = cand1
+        elif os.path.exists(cand2):
+            depth_path = cand2
+
+    estimator = PoseEstimator(
+        model_dir=current_app.config['MODEL_FOLDER'],
+        dataset_dir=current_app.config['DATASET_FOLDER'],
+    )
+    objects = estimator.detect_candidate_objects(image_path, depth_path=depth_path)
+
+    resolved_target = None
+    if click_x_norm is not None and click_y_norm is not None:
+        rgb, depth_m, _ = load_rgbd(image_path, depth_path=depth_path)
+        resolved_target = ObjectDetector.resolve_target_from_click(
+            rgb, depth_m, float(click_x_norm), float(click_y_norm), objects=objects
+        )
+
+    return jsonify(_sanitize_for_json({
+        'objects': objects,
+        'resolved_target': resolved_target,
+    })), 200
 
 
 @ml_bp.route('/estimate-pose', methods=['POST'])
 @jwt_required()
 def estimate_pose():
     """
-    Stage 2: Run 6D Object Pose Estimation (Track A EfficientPose, Track B PnP, or both).
+    Stage 2: Run 6D Object Pose Estimation for targeted object (Track A EfficientPose, Track B PnP, or both).
     """
     user_id = get_jwt_identity()
     data = request.get_json() or {}
@@ -326,6 +483,9 @@ def estimate_pose():
     prediction_info = data.get('prediction_info')
     track = data.get('track', 'both')  # 'track_a', 'track_b', or 'both'
     camera_params = data.get('camera_params')
+    target_point = data.get('target_point')
+    bounding_box = data.get('bounding_box')
+    selected_object_name = data.get('selected_object_name') or data.get('object_name')
 
     if not filename:
         return jsonify({'error': 'Filename required for 6D pose estimation'}), 400
@@ -368,11 +528,14 @@ def estimate_pose():
         depth_stats=depth_stats,
         prediction_info=prediction_info,
         track=track,
-        camera_params=camera_params
+        camera_params=camera_params,
+        target_point=target_point,
+        bounding_box=bounding_box,
+        selected_object_name=selected_object_name
     )
 
     log_activity(user_id, 'pose_estimation', 'ml',
-                 f'Ran 6D Pose Estimation ({track}) on RGB-D image: {filename}',
+                 f'Ran 6D Pose Estimation ({track}) on RGB-D image: {filename} for object: {pose_result.get("object_name")}',
                  metadata={
                      'filename': filename,
                      'track': track,
@@ -380,10 +543,10 @@ def estimate_pose():
                      'confidence': pose_result.get('confidence_pct'),
                  })
 
-    return jsonify({
+    return jsonify(_sanitize_for_json({
         'pose_result': pose_result,
         'filename': filename,
-    }), 200
+    })), 200
 
 
 @ml_bp.route('/point-cloud-3d', methods=['POST'])
@@ -445,7 +608,7 @@ def get_sample_rgbd_images():
     os.makedirs(samples_dir, exist_ok=True)
 
     # Ensure samples exist
-    if not os.path.exists(os.path.join(samples_dir, 'sample_rgbd_box.png')):
+    if not os.path.exists(os.path.join(samples_dir, 'sample_rgbd_warehouse.png')):
         from create_sample_rgbd_images import create_sample_rgbd_images
         create_sample_rgbd_images(samples_dir)
 

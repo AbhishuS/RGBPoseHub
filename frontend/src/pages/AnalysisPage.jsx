@@ -16,6 +16,10 @@ export default function AnalysisPage() {
   // State
   const [dragover, setDragover] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [depthPreview, setDepthPreview] = useState(null);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedDepthFile, setSelectedDepthFile] = useState(null);
+  const [autoDepth, setAutoDepth] = useState(false);
   const [loading, setLoading] = useState(false);
   const [poseLoading, setPoseLoading] = useState(false);
   const [error, setError] = useState('');
@@ -29,11 +33,17 @@ export default function AnalysisPage() {
   const [poseResults, setPoseResults] = useState(null);
   const [currentFilename, setCurrentFilename] = useState(null);
 
+  // Multi-Object Pinpointing & Candidate State
+  const [candidateObjects, setCandidateObjects] = useState([]);
+  const [selectedObject, setSelectedObject] = useState(null);
+  const [clickTarget, setClickTarget] = useState(null);
+
   // Catalog State
   const [objects, setObjects] = useState([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
 
   const fileInputRef = useRef(null);
+  const depthInputRef = useRef(null);
 
   useEffect(() => {
     loadSamples();
@@ -64,8 +74,31 @@ export default function AnalysisPage() {
     }
   };
 
-  const handleForensicAnalysis = async (file, depthFile = null) => {
+  const handleSelectFile = (file) => {
     if (!file || !file.type.startsWith('image/')) {
+      setError('Please select a valid image file');
+      return;
+    }
+    setError('');
+    setSelectedFile(file);
+    const reader = new FileReader();
+    reader.onload = (e) => setPreview(e.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSelectDepthFile = (file) => {
+    if (!file) return;
+    setSelectedDepthFile(file);
+    setAutoDepth(false);
+    const reader = new FileReader();
+    reader.onload = (e) => setDepthPreview(e.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleForensicAnalysis = async (file, depthFile = null) => {
+    const imageFile = file || selectedFile;
+    const depth = depthFile || selectedDepthFile;
+    if (!imageFile || !imageFile.type.startsWith('image/')) {
       setError('Please select a valid image file');
       return;
     }
@@ -73,21 +106,32 @@ export default function AnalysisPage() {
     setForensics(null);
     setPoseResults(null);
 
-    const reader = new FileReader();
-    reader.onload = (e) => setPreview(e.target.result);
-    reader.readAsDataURL(file);
+    if (!preview) {
+      const reader = new FileReader();
+      reader.onload = (e) => setPreview(e.target.result);
+      reader.readAsDataURL(imageFile);
+    }
 
     setLoading(true);
     try {
       const formData = new FormData();
-      formData.append('image', file);
-      if (depthFile) formData.append('depth_image', depthFile);
+      formData.append('image', imageFile);
+      if (depth) formData.append('depth_image', depth);
+      if (autoDepth && !depth) formData.append('auto_depth', 'true');
 
       const res = await mlAPI.forensicAnalyze(formData);
       setForensics(res.data.forensics);
       setCurrentFilename(res.data.filename);
-      if (res.data.original_image && !preview) {
-        setPreview(`data:image/png;base64,${res.data.original_image}`);
+      const objs = res.data.candidate_objects || [];
+      setCandidateObjects(objs);
+      if (objs.length > 0) {
+        setSelectedObject(objs[0]);
+      } else {
+        setSelectedObject(null);
+      }
+      setClickTarget(null);
+      if (res.data.original_image) {
+        setPreview(`data:image/jpeg;base64,${res.data.original_image}`);
       }
     } catch (err) {
       setError(err.response?.data?.error || 'Forensic analysis failed');
@@ -106,6 +150,14 @@ export default function AnalysisPage() {
       const res = await mlAPI.forensicAnalyzeJson({ filename });
       setForensics(res.data.forensics);
       setCurrentFilename(filename);
+      const objs = res.data.candidate_objects || [];
+      setCandidateObjects(objs);
+      if (objs.length > 0) {
+        setSelectedObject(objs[0]);
+      } else {
+        setSelectedObject(null);
+      }
+      setClickTarget(null);
       if (res.data.original_image) {
         setPreview(`data:image/png;base64,${res.data.original_image}`);
       }
@@ -116,7 +168,48 @@ export default function AnalysisPage() {
     }
   };
 
-  const proceedToPoseEstimation = async () => {
+  const handleImageClick = (e) => {
+    if (!preview) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x_norm = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const y_norm = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+
+    // Check if clicked inside any candidate object bounding box
+    const hitObj = candidateObjects.find((obj) => {
+      if (!obj.bbox_norm) return false;
+      const [x1, y1, x2, y2] = obj.bbox_norm;
+      return x_norm >= x1 && x_norm <= x2 && y_norm >= y1 && y_norm <= y2;
+    });
+
+    if (hitObj) {
+      setSelectedObject(hitObj);
+      setClickTarget(null);
+      if (poseResults) {
+        runPoseForTarget(hitObj, null);
+      }
+    } else {
+      const newTarget = {
+        x_norm,
+        y_norm,
+        px_x: Math.round(x_norm * 480),
+        px_y: Math.round(y_norm * 360),
+      };
+      setClickTarget(newTarget);
+      const customObj = {
+        id: 'custom_pinpoint',
+        label: `Pinpointed Target @ (${newTarget.px_x}, ${newTarget.px_y})`,
+        center_norm: { x: x_norm, y: y_norm },
+        depth_m: 'Auto',
+        color: '#ec4899',
+      };
+      setSelectedObject(customObj);
+      if (poseResults) {
+        runPoseForTarget(customObj, newTarget);
+      }
+    }
+  };
+
+  const runPoseForTarget = async (obj = selectedObject, targetPoint = clickTarget) => {
     if (!currentFilename || !forensics?.rgbd_gatekeeper?.is_rgbd) return;
 
     setPoseLoading(true);
@@ -126,8 +219,14 @@ export default function AnalysisPage() {
         filename: currentFilename,
         depth_stats: forensics.rgbd_gatekeeper.depth_stats,
         track: 'both',
+        target_point: targetPoint || (obj?.center_norm ? { x_norm: obj.center_norm.x, y_norm: obj.center_norm.y } : undefined),
+        bounding_box: obj?.bbox,
+        selected_object_name: obj?.label,
       });
       setPoseResults(res.data.pose_result);
+      if (res.data.pose_result?.candidate_objects?.length > 0) {
+        setCandidateObjects(res.data.pose_result.candidate_objects);
+      }
       setPoseTrackTab('dual');
     } catch (err) {
       setError(err.response?.data?.error || 'Pose estimation failed');
@@ -136,11 +235,22 @@ export default function AnalysisPage() {
     }
   };
 
+  const proceedToPoseEstimation = () => {
+    runPoseForTarget(selectedObject, clickTarget);
+  };
+
   const resetAnalysis = () => {
     setForensics(null);
     setPoseResults(null);
     setPreview(null);
+    setDepthPreview(null);
+    setSelectedFile(null);
+    setSelectedDepthFile(null);
+    setAutoDepth(false);
     setCurrentFilename(null);
+    setCandidateObjects([]);
+    setSelectedObject(null);
+    setClickTarget(null);
     setError('');
   };
 
@@ -177,27 +287,137 @@ export default function AnalysisPage() {
           <>
             {!forensics && !loading && (
               <>
-                <div
-                  className={`upload-zone ${dragover ? 'dragover' : ''}`}
-                  onDragOver={(e) => { e.preventDefault(); setDragover(true); }}
-                  onDragLeave={() => setDragover(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setDragover(false);
-                    if (e.dataTransfer.files[0]) handleForensicAnalysis(e.dataTransfer.files[0]);
-                  }}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <div className="upload-icon">🔬</div>
-                  <p><strong>Drop an image or RGB-D file here</strong> or click to browse</p>
-                  <p className="upload-hint">Supports PNG, JPG, TIFF, 4-Channel RGBD • Max 16MB</p>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    hidden
-                    onChange={(e) => e.target.files[0] && handleForensicAnalysis(e.target.files[0])}
-                  />
+                {/* Two-Panel Upload: RGB Image + Depth Map */}
+                <div style={{ display: 'grid', gridTemplateColumns: selectedFile ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+                  {/* Panel 1: Main RGB/RGBD Image */}
+                  <div
+                    className={`upload-zone ${dragover ? 'dragover' : ''}`}
+                    style={{ minHeight: selectedFile ? '180px' : '220px', position: 'relative' }}
+                    onDragOver={(e) => { e.preventDefault(); setDragover(true); }}
+                    onDragLeave={() => setDragover(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragover(false);
+                      if (e.dataTransfer.files[0]) handleSelectFile(e.dataTransfer.files[0]);
+                    }}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {preview ? (
+                      <div style={{ textAlign: 'center' }}>
+                        <img src={preview} alt="Selected" style={{ maxHeight: '140px', borderRadius: '8px', marginBottom: '0.5rem' }} />
+                        <p style={{ fontSize: '0.85rem', color: '#10b981', margin: 0 }}>✓ {selectedFile?.name}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="upload-icon">🖼️</div>
+                        <p><strong>Drop your RGB image here</strong> or click to browse</p>
+                        <p className="upload-hint">Color photo: JPG, PNG, TIFF, <strong>HEIC</strong> (iPhone) • Max 20 MB</p>
+                      </>
+                    )}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*,.heic,.heif"
+                      hidden
+                      onChange={(e) => e.target.files[0] && handleSelectFile(e.target.files[0])}
+                    />
+                  </div>
+
+                  {/* Panel 2: Depth Map (visible after selecting RGB) */}
+                  {selectedFile && (
+                    <div
+                      className="upload-zone"
+                      style={{
+                        minHeight: '180px',
+                        borderColor: selectedDepthFile ? '#10b981' : autoDepth ? '#f59e0b' : 'var(--border)',
+                        background: selectedDepthFile ? 'rgba(16,185,129,0.05)' : autoDepth ? 'rgba(245,158,11,0.05)' : undefined,
+                        cursor: autoDepth ? 'default' : 'pointer',
+                      }}
+                      onClick={() => { if (!autoDepth) depthInputRef.current?.click(); }}
+                    >
+                      {selectedDepthFile ? (
+                        <div style={{ textAlign: 'center' }}>
+                          {depthPreview && <img src={depthPreview} alt="Depth" style={{ maxHeight: '100px', borderRadius: '8px', marginBottom: '0.5rem', filter: 'grayscale(1) contrast(1.5)' }} />}
+                          <p style={{ fontSize: '0.85rem', color: '#10b981', margin: 0 }}>✓ Depth: {selectedDepthFile.name}</p>
+                          <button
+                            className="btn btn-sm" style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#ef4444' }}
+                            onClick={(e) => { e.stopPropagation(); setSelectedDepthFile(null); setDepthPreview(null); }}
+                          >✕ Remove</button>
+                        </div>
+                      ) : autoDepth ? (
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '2rem', marginBottom: '0.25rem' }}>🤖</div>
+                          <p style={{ fontSize: '0.9rem', color: '#f59e0b', margin: '0 0 0.25rem' }}><strong>Auto-Depth Enabled</strong></p>
+                          <p className="upload-hint">Depth will be estimated from image content using edge detection &amp; saliency analysis</p>
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: '2rem', marginBottom: '0.25rem' }}>📏</div>
+                          <p><strong>Drop depth map here</strong> (optional)</p>
+                          <p className="upload-hint">Grayscale depth PNG/TIFF • <strong>iPhone Portrait HEIC</strong> (depth auto-extracted) • 16-bit sensor PNG</p>
+                        </>
+                      )}
+                      <input
+                        ref={depthInputRef}
+                        type="file"
+                        accept="image/*,.heic,.heif"
+                        hidden
+                        onChange={(e) => e.target.files[0] && handleSelectDepthFile(e.target.files[0])}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Action Buttons: Auto-Depth toggle + Analyze button */}
+                {selectedFile && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '1rem', padding: '1rem', background: 'var(--code-bg)', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                      {!selectedDepthFile && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
+                          <input
+                            type="checkbox"
+                            checked={autoDepth}
+                            onChange={(e) => setAutoDepth(e.target.checked)}
+                            style={{ width: '16px', height: '16px', accentColor: '#f59e0b' }}
+                          />
+                          <span style={{ color: autoDepth ? '#f59e0b' : 'var(--text-secondary)' }}>🤖 Auto-Generate Depth from Image</span>
+                        </label>
+                      )}
+                      {!selectedDepthFile && !autoDepth && (
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                          Upload a depth file or enable auto-depth for 6D pose estimation
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => handleForensicAnalysis()}
+                    >
+                      🔬 Run Forensic Analysis{(selectedDepthFile || autoDepth) ? ' + Depth' : ''}
+                    </button>
+                  </div>
+                )}
+
+                {/* Quick Educational Guide: What is Depth Map? */}
+                <div style={{ marginTop: '1rem', padding: '1rem 1.25rem', background: 'rgba(59, 130, 246, 0.05)', borderRadius: '10px', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                    <span style={{ fontSize: '1.1rem' }}>💡</span>
+                    <strong style={{ fontSize: '0.88rem', color: '#60a5fa' }}>What is a Depth Map & How to provide it?</strong>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.75rem', marginTop: '0.5rem', fontSize: '0.8rem', color: '#94a3b8' }}>
+                    <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '0.6rem 0.8rem', borderRadius: '6px' }}>
+                      <strong style={{ color: '#f8fafc', display: 'block', marginBottom: '0.2rem' }}>1. What is Depth (Z)?</strong>
+                      Standard photos only have 2D color (X, Y). A Depth Map assigns the real-world distance (e.g. 1.2 meters) to each pixel so 3D spatial pose can be calculated.
+                    </div>
+                    <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '0.6rem 0.8rem', borderRadius: '6px' }}>
+                      <strong style={{ color: '#f8fafc', display: 'block', marginBottom: '0.2rem' }}>2. From iPhone / RealSense</strong>
+                      Shoot in Portrait mode on iPhone or use apps like <em>Record3D</em> / <em>Focos</em> to export the grayscale depth image, then drop it in the 2nd box.
+                    </div>
+                    <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '0.6rem 0.8rem', borderRadius: '6px' }}>
+                      <strong style={{ color: '#f8fafc', display: 'block', marginBottom: '0.2rem' }}>3. Standard 2D Photos (No Sensor)</strong>
+                      If you only have a normal 2D photo, just check <strong>"🤖 Auto-Generate Depth"</strong> above and AI will synthesize the 3D depth automatically.
+                    </div>
+                  </div>
                 </div>
 
                 {/* Sample RGB-D Test Images Section */}
@@ -276,8 +496,13 @@ export default function AnalysisPage() {
 
                     <div>
                       {gatekeeper?.is_rgbd ? (
-                        <button className="btn btn-primary" onClick={proceedToPoseEstimation} disabled={poseLoading}>
-                          {poseLoading ? 'Computing 6D Pose...' : '➡️ Proceed to 6D Pose Detection'}
+                        <button className="btn btn-primary" onClick={proceedToPoseEstimation} disabled={poseLoading} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span>{poseLoading ? '⏳ Computing 6D Pose...' : '🎯 Estimate 6D Pose'}</span>
+                          {selectedObject && (
+                            <span style={{ fontSize: '0.78rem', background: 'rgba(255,255,255,0.2)', padding: '0.15rem 0.5rem', borderRadius: '6px' }}>
+                              {selectedObject.label}
+                            </span>
+                          )}
                         </button>
                       ) : (
                         <div style={{ textAlign: 'right' }}>
@@ -322,37 +547,200 @@ export default function AnalysisPage() {
                 </div>
 
                 {/* Depth Heatmap Tab */}
+                {/* Depth Heatmap & Interactive Object Pinpointer Tab */}
                 {sherloqCategory === 'gatekeeper' && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem' }}>
-                    <div className="card">
-                      <h4>Original RGB Input</h4>
-                      <img src={preview} alt="RGB" style={{ width: '100%', borderRadius: '8px', marginTop: '0.5rem' }} />
-                    </div>
-                    <div className="card">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h4>Depth Map Visualization (Inferno Heatmap)</h4>
-                        <span className="badge badge-success">0.4m – 2.0m Scale</span>
-                      </div>
-                      {gatekeeper?.depth_heatmap ? (
-                        <div style={{ marginTop: '0.5rem' }}>
-                          <img src={`data:image/png;base64,${gatekeeper.depth_heatmap}`} alt="Depth Heatmap" style={{ width: '100%', borderRadius: '8px' }} />
-                          {/* Color bar scale */}
-                          <div style={{ marginTop: '0.5rem', height: '12px', background: 'linear-gradient(to right, #000000, #ff0000, #ffaa00, #ffff00)', borderRadius: '6px' }} />
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                            <span>Close (0.4m)</span>
-                            <span>Mid (1.2m)</span>
-                            <span>Far (2.0m+)</span>
+                  <div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem' }}>
+                      <div className="card">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <h4 style={{ margin: 0 }}>Original RGB Input (Click Object to Pinpoint 🎯)</h4>
+                          <span className="badge badge-info" style={{ fontSize: '0.75rem' }}>Interactive Target Selector</span>
+                        </div>
+                        
+                        {/* Interactive Image Container with Bounding Boxes and Reticle */}
+                        <div
+                          style={{
+                            position: 'relative',
+                            width: '100%',
+                            borderRadius: '8px',
+                            overflow: 'hidden',
+                            cursor: 'crosshair',
+                            boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                          }}
+                          onClick={handleImageClick}
+                        >
+                          <img src={preview} alt="RGB" style={{ width: '100%', display: 'block' }} />
+
+                          {/* Candidate Object Overlays */}
+                          {candidateObjects.map((obj) => {
+                            if (!obj.bbox_norm) return null;
+                            const [x1, y1, x2, y2] = obj.bbox_norm;
+                            const isSelected = selectedObject?.id === obj.id;
+                            return (
+                              <div
+                                key={obj.id}
+                                style={{
+                                  position: 'absolute',
+                                  left: `${x1 * 100}%`,
+                                  top: `${y1 * 100}%`,
+                                  width: `${(x2 - x1) * 100}%`,
+                                  height: `${(y2 - y1) * 100}%`,
+                                  border: `2px ${isSelected ? 'solid' : 'dashed'} ${obj.color || '#38bdf8'}`,
+                                  background: isSelected ? `${obj.color}22` : 'transparent',
+                                  boxShadow: isSelected ? `0 0 15px ${obj.color}88` : 'none',
+                                  pointerEvents: 'none',
+                                  borderRadius: '6px',
+                                  transition: 'all 0.2s',
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    position: 'absolute',
+                                    top: '-24px',
+                                    left: '0',
+                                    background: obj.color || '#38bdf8',
+                                    color: '#ffffff',
+                                    fontSize: '0.7rem',
+                                    fontWeight: 700,
+                                    padding: '0.15rem 0.45rem',
+                                    borderRadius: '4px',
+                                    whiteSpace: 'nowrap',
+                                    boxShadow: '0 2px 6px rgba(0,0,0,0.4)',
+                                  }}
+                                >
+                                  {obj.label} ({obj.depth_m}m)
+                                </span>
+                              </div>
+                            );
+                          })}
+
+                          {/* Pinpoint Reticle Crosshair */}
+                          {(selectedObject?.center_norm || clickTarget) && (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: `${(clickTarget?.x_norm ?? selectedObject?.center_norm?.x ?? 0.5) * 100}%`,
+                                top: `${(clickTarget?.y_norm ?? selectedObject?.center_norm?.y ?? 0.5) * 100}%`,
+                                transform: 'translate(-50%, -50%)',
+                                pointerEvents: 'none',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: '36px',
+                                  height: '36px',
+                                  borderRadius: '50%',
+                                  border: '2px solid #ec4899',
+                                  background: 'rgba(236, 72, 153, 0.25)',
+                                  boxShadow: '0 0 20px #ec4899, inset 0 0 10px #ec4899',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: '1rem',
+                                }}
+                              >
+                                🎯
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Interactive Target Object Chip Bar */}
+                        <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: 'var(--code-bg)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#38bdf8' }}>
+                              🎯 Target Object for 6D Pose Estimation:
+                            </span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                              Click image or badge to select
+                            </span>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            {candidateObjects.map((obj) => (
+                              <button
+                                key={obj.id}
+                                onClick={() => {
+                                  setSelectedObject(obj);
+                                  setClickTarget(null);
+                                  if (poseResults) runPoseForTarget(obj, null);
+                                }}
+                                style={{
+                                  background: selectedObject?.id === obj.id ? obj.color : 'rgba(255,255,255,0.05)',
+                                  color: selectedObject?.id === obj.id ? '#ffffff' : 'var(--text-secondary)',
+                                  border: `1px solid ${obj.color || 'var(--border)'}`,
+                                  borderRadius: '6px',
+                                  padding: '0.35rem 0.65rem',
+                                  fontSize: '0.78rem',
+                                  cursor: 'pointer',
+                                  fontWeight: selectedObject?.id === obj.id ? 700 : 400,
+                                  boxShadow: selectedObject?.id === obj.id ? `0 0 12px ${obj.color}66` : 'none',
+                                  transition: 'all 0.2s',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '0.35rem',
+                                }}
+                              >
+                                <span>🎯</span>
+                                <span>{obj.label}</span>
+                                <span style={{ opacity: 0.75, fontSize: '0.72rem' }}>({obj.depth_m}m)</span>
+                              </button>
+                            ))}
+
+                            {clickTarget && (
+                              <button
+                                style={{
+                                  background: '#ec4899',
+                                  color: '#ffffff',
+                                  border: '1px solid #ec4899',
+                                  borderRadius: '6px',
+                                  padding: '0.35rem 0.65rem',
+                                  fontSize: '0.78rem',
+                                  fontWeight: 700,
+                                  boxShadow: '0 0 12px rgba(236, 72, 153, 0.4)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '0.35rem',
+                                }}
+                              >
+                                <span>🎯</span>
+                                <span>Custom Pinpoint ({Math.round(clickTarget.x_norm * 100)}%, {Math.round(clickTarget.y_norm * 100)}%)</span>
+                              </button>
+                            )}
                           </div>
                         </div>
-                      ) : (
-                        <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                          <p style={{ fontSize: '2rem' }}>🚫</p>
-                          <p>No depth map detected in standard 2D image.</p>
-                          <p style={{ fontSize: '0.85rem', color: '#10b981', marginTop: '0.5rem' }}>
-                            💡 Click "Try Sample Verified RGB-D Images" above to test depth heatmaps!
-                          </p>
+                      </div>
+
+                      <div className="card">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h4>Depth Map Visualization (Inferno Heatmap)</h4>
+                          <span className="badge badge-success">0.4m – 2.0m Scale</span>
                         </div>
-                      )}
+                        {gatekeeper?.depth_heatmap ? (
+                          <div style={{ marginTop: '0.5rem' }}>
+                            <img src={`data:image/png;base64,${gatekeeper.depth_heatmap}`} alt="Depth Heatmap" style={{ width: '100%', borderRadius: '8px' }} />
+                            {/* Color bar scale */}
+                            <div style={{ marginTop: '0.5rem', height: '12px', background: 'linear-gradient(to right, #000000, #ff0000, #ffaa00, #ffff00)', borderRadius: '6px' }} />
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                              <span>Close (0.4m)</span>
+                              <span>Mid (1.2m)</span>
+                              <span>Far (2.0m+)</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                            <p style={{ fontSize: '2rem' }}>🚫</p>
+                            <p>No depth map detected in standard 2D image.</p>
+                            <p style={{ fontSize: '0.85rem', color: '#10b981', marginTop: '0.5rem' }}>
+                              💡 Click "Try Sample Verified RGB-D Images" above to test depth heatmaps!
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -728,6 +1116,70 @@ export default function AnalysisPage() {
                         </button>
                       </div>
                     </div>
+
+                    {/* Object Switcher Toolbar */}
+                    {candidateObjects.length > 0 && (
+                      <div style={{
+                        background: 'rgba(15, 23, 42, 0.65)',
+                        border: '1px solid rgba(56, 189, 248, 0.25)',
+                        borderRadius: '12px',
+                        padding: '0.85rem 1.25rem',
+                        marginBottom: '1.25rem',
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '0.75rem',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                          <span style={{ fontSize: '1.1rem' }}>🎯</span>
+                          <div>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f8fafc' }}>
+                              Analyzing Object: <strong style={{ color: '#38bdf8' }}>{poseResults.object_name}</strong>
+                            </span>
+                            <span style={{ fontSize: '0.75rem', color: '#94a3b8', marginLeft: '0.6rem' }}>
+                              (Click any other object below to calculate pose for that specific object)
+                            </span>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                          {candidateObjects.map((obj) => {
+                            const isCurrent = poseResults.object_name === obj.label || selectedObject?.id === obj.id;
+                            return (
+                              <button
+                                key={obj.id}
+                                disabled={poseLoading}
+                                onClick={() => {
+                                  setSelectedObject(obj);
+                                  setClickTarget(null);
+                                  runPoseForTarget(obj, null);
+                                }}
+                                style={{
+                                  background: isCurrent ? obj.color : 'rgba(255, 255, 255, 0.06)',
+                                  color: isCurrent ? '#ffffff' : 'var(--text-secondary)',
+                                  border: `1px solid ${obj.color || 'rgba(255,255,255,0.1)'}`,
+                                  borderRadius: '6px',
+                                  padding: '0.3rem 0.65rem',
+                                  fontSize: '0.78rem',
+                                  cursor: 'pointer',
+                                  fontWeight: isCurrent ? 700 : 400,
+                                  boxShadow: isCurrent ? `0 0 12px ${obj.color}66` : 'none',
+                                  transition: 'all 0.2s',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '0.3rem',
+                                }}
+                              >
+                                <span>🎯</span>
+                                <span>{obj.label}</span>
+                                <span style={{ opacity: 0.8, fontSize: '0.7rem' }}>({obj.depth_m}m)</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Dual-Track Comparison Card */}
                     {poseTrackTab === 'dual' && poseResults.comparison && (

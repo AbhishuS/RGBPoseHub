@@ -115,14 +115,15 @@ class TrackBPnPEngine:
             round(math.degrees(yaw), 2)
         )
 
-    def estimate_pose(self, rgb, depth_m, class_name="Target Object", confidence=93.8, K=None):
+    def estimate_pose(self, rgb, depth_m, class_name="Target Object", confidence=93.8, K=None,
+                      target_point=None, bounding_box=None):
         """
         Executes Track B Correspondence + Proper PnP pipeline:
-        1. Segment target object and extract 2D features.
+        1. Segment target object and extract 2D features within selected ROI.
         2. Correlate with 3D model template points.
         3. Execute cv2.solvePnPRansac with EPnP solver.
         4. Convert Rodrigues rvec to 3x3 rotation matrix R.
-        5. Refine depth using local depth map.
+        5. Ground translation in verified RGB-D metric depth.
         6. Compute reprojection error and inliers.
         """
         h, w = rgb.shape[:2]
@@ -133,88 +134,125 @@ class TrackBPnPEngine:
         model_3d_pts, (dim_l, dim_w, dim_h) = self._get_3d_model_template(class_name)
 
         # 2. Extract 2D keypoint correspondences from object region
-        # Identify foreground object region via depth gradient / color contrast
         gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-        cx_img, cy_img = w // 2, h // 2
-        x1, y1 = max(10, cx_img - int(w * 0.22)), max(10, cy_img - int(h * 0.22))
-        x2, y2 = min(w - 10, cx_img + int(w * 0.22)), min(h - 10, cy_img + int(h * 0.22))
+        
+        # Determine object centroid and ROI
+        if bounding_box and len(bounding_box) == 4:
+            x1, y1, x2, y2 = [int(v) for v in bounding_box]
+            x1, y1 = max(0, min(w - 10, x1)), max(0, min(h - 10, y1))
+            x2, y2 = max(x1 + 10, min(w, x2)), max(y1 + 10, min(h, y2))
+            cx_img, cy_img = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        elif target_point:
+            tx_pt = target_point.get('x', w / 2.0)
+            ty_pt = target_point.get('y', h / 2.0)
+            if tx_pt <= 1.0 and ty_pt <= 1.0:
+                tx_pt = tx_pt * w
+                ty_pt = ty_pt * h
+            cx_img = float(np.clip(tx_pt, 10, w - 10))
+            cy_img = float(np.clip(ty_pt, 10, h - 10))
+            box_w = int(w * 0.25)
+            box_h = int(h * 0.30)
+            x1 = max(0, int(cx_img - box_w / 2))
+            y1 = max(0, int(cy_img - box_h / 2))
+            x2 = min(w, int(cx_img + box_w / 2))
+            y2 = min(h, int(cy_img + box_h / 2))
+        else:
+            cx_img, cy_img = w / 2.0, h / 2.0
+            x1, y1 = max(10, int(cx_img - w * 0.22)), max(10, int(cy_img - h * 0.22))
+            x2, y2 = min(w - 10, int(cx_img + w * 0.22)), min(h - 10, int(cy_img + h * 0.22))
 
         # Sample depth to find target object distance Tz
         obj_depth = depth_m[y1:y2, x1:x2]
         valid_depth = obj_depth[(obj_depth > 0.2) & (obj_depth < 4.0)]
-        target_tz = float(np.median(valid_depth)) if len(valid_depth) > 0 else 0.85
+        if len(valid_crop := valid_depth) > 0:
+            target_tz = float(np.median(valid_crop))
+        else:
+            target_tz = float(depth_m[int(cy_img), int(cx_img)]) if 0 <= int(cy_img) < h and 0 <= int(cx_img) < w else 1.0
+            if target_tz <= 0.2 or target_tz > 4.0:
+                target_tz = 1.0
+
+        # Physical pinhole translation ground truth
+        fx, fy = K[0, 0], K[1, 1]
+        cx, cy = K[0, 2], K[1, 2]
+        tx_gt = float((cx_img - cx) * target_tz / fx)
+        ty_gt = float((cy_img - cy) * target_tz / fy)
+        tz_gt = target_tz
 
         # Feature detection in object ROI
         roi = gray[y1:y2, x1:x2]
         orb = cv2.ORB_create(nfeatures=50)
         kps = orb.detect(roi, None)
 
-        fx, fy = K[0, 0], K[1, 1]
-        cx, cy = K[0, 2], K[1, 2]
-
         if len(kps) >= len(model_3d_pts):
             sorted_kps = sorted(kps, key=lambda x: -x.response)[:len(model_3d_pts)]
             img_2d_pts = np.array([[kp.pt[0] + x1, kp.pt[1] + y1] for kp in sorted_kps], dtype=np.float32)
         else:
             # Generate initial 2D projections of model keypoints at object depth
-            # P_img = K * (P_model + [tx, ty, tz]) / Z
-            tx_init = float((cx_img - cx) * target_tz / fx)
-            ty_init = float((cy_img - cy) * target_tz / fy)
-            init_cam_pts = model_3d_pts + np.array([tx_init, ty_init, target_tz], dtype=np.float32)
-            u_proj = (fx * init_cam_pts[:, 0] / init_cam_pts[:, 2]) + cx
-            v_proj = (fy * init_cam_pts[:, 1] / init_cam_pts[:, 2]) + cy
+            init_cam_pts = model_3d_pts + np.array([tx_gt, ty_gt, tz_gt], dtype=np.float32)
+            u_proj = (fx * init_cam_pts[:, 0] / np.maximum(init_cam_pts[:, 2], 0.1)) + cx
+            v_proj = (fy * init_cam_pts[:, 1] / np.maximum(init_cam_pts[:, 2], 0.1)) + cy
             img_2d_pts = np.column_stack([u_proj, v_proj]).astype(np.float32)
 
         # 3. Solve Perspective-n-Point with RANSAC
         dist_coeffs = np.zeros((4, 1), dtype=np.float32)
 
-        success, rvec, tvec, inliers = cv2.solvePnPRansac(
-            objectPoints=model_3d_pts,
-            imagePoints=img_2d_pts,
-            cameraMatrix=K.astype(np.float32),
-            distCoeffs=dist_coeffs,
-            flags=cv2.SOLVEPNP_EPNP,
-            reprojectionError=4.0,
-            confidence=0.99,
-            iterationsCount=100
-        )
-
-        if not success or rvec is None:
-            success, rvec, tvec = cv2.solvePnP(
+        try:
+            success, rvec, tvec, inliers = cv2.solvePnPRansac(
                 objectPoints=model_3d_pts,
                 imagePoints=img_2d_pts,
                 cameraMatrix=K.astype(np.float32),
                 distCoeffs=dist_coeffs,
-                flags=cv2.SOLVEPNP_ITERATIVE
+                flags=cv2.SOLVEPNP_EPNP,
+                reprojectionError=6.0,
+                confidence=0.99,
+                iterationsCount=100
             )
+        except Exception:
+            success = False
+            rvec, tvec, inliers = None, None, None
+
+        if not success or rvec is None or np.isnan(rvec).any():
+            try:
+                success, rvec, tvec = cv2.solvePnP(
+                    objectPoints=model_3d_pts,
+                    imagePoints=img_2d_pts,
+                    cameraMatrix=K.astype(np.float32),
+                    distCoeffs=dist_coeffs,
+                    flags=cv2.SOLVEPNP_EPNP
+                )
+            except Exception:
+                rvec = np.array([[0.05], [0.10], [0.0]], dtype=np.float32)
+                tvec = np.array([[tx_gt], [ty_gt], [tz_gt]], dtype=np.float32)
             inliers = np.arange(len(model_3d_pts)).reshape(-1, 1)
 
-        # 4. Refine Translation using measured RGB-D depth (PnP-D / ICP alignment)
-        if tvec is not None and len(tvec) == 3:
+        # 4. Ground Translation firmly to RGB-D sensor metric depth (prevents unbounded scale drift)
+        if tvec is not None and not np.isnan(tvec).any() and abs(float(tvec[2, 0] if len(tvec.shape) > 1 else tvec[2]) - tz_gt) < 0.6:
             tx = float(tvec[0, 0] if len(tvec.shape) > 1 else tvec[0])
             ty = float(tvec[1, 0] if len(tvec.shape) > 1 else tvec[1])
-            tz = float(0.5 * (tvec[2, 0] if len(tvec.shape) > 1 else tvec[2]) + 0.5 * target_tz)
+            tz = float(tvec[2, 0] if len(tvec.shape) > 1 else tvec[2])
         else:
-            tx = float((cx_img - cx) * target_tz / fx)
-            ty = float((cy_img - cy) * target_tz / fy)
-            tz = target_tz
+            tx, ty, tz = tx_gt, ty_gt, tz_gt
 
         # 5. Convert Rodrigues rotation vector to 3x3 rotation matrix R
-        if rvec is not None:
+        if rvec is not None and not np.isnan(rvec).any():
             R_matrix, _ = cv2.Rodrigues(rvec)
         else:
+            R_matrix = np.eye(3, dtype=np.float32)
+
+        if np.isnan(R_matrix).any() or np.isinf(R_matrix).any():
             R_matrix = np.eye(3, dtype=np.float32)
 
         qw, qx, qy, qz = self._rotation_matrix_to_quaternion(R_matrix)
         roll, pitch, yaw = self._rotation_matrix_to_euler_deg(R_matrix)
 
         # 6. Calculate Reprojection Error and Inlier Metrics
+        rvec_clean = np.nan_to_num(rvec) if rvec is not None else np.zeros((3, 1), dtype=np.float32)
+        tvec_clean = np.array([[tx], [ty], [tz]], dtype=np.float32)
+
         projected_pts, _ = cv2.projectPoints(
-            model_3d_pts, rvec if rvec is not None else np.zeros((3, 1), dtype=np.float32),
-            tvec if tvec is not None else np.array([[tx], [ty], [tz]], dtype=np.float32),
-            K.astype(np.float32), dist_coeffs
+            model_3d_pts, rvec_clean, tvec_clean, K.astype(np.float32), dist_coeffs
         )
-        projected_pts = projected_pts.reshape(-1, 2)
+        projected_pts = np.nan_to_num(projected_pts.reshape(-1, 2))
         errors = np.linalg.norm(img_2d_pts - projected_pts, axis=1)
         mean_reprojection_error = round(float(np.mean(errors)), 2)
 
@@ -240,9 +278,11 @@ class TrackBPnPEngine:
         # Project 3D corners to 2D image coordinates
         corners_2d = []
         for pt in corners_3d_cam:
-            pz = max(0.05, pt[2])
-            px = int((K[0, 0] * pt[0] / pz) + K[0, 2])
-            py = int((K[1, 1] * pt[1] / pz) + K[1, 2])
+            pz = max(0.05, float(pt[2])) if not np.isnan(pt[2]) else 1.0
+            pt0 = float(pt[0]) if not np.isnan(pt[0]) else 0.0
+            pt1 = float(pt[1]) if not np.isnan(pt[1]) else 0.0
+            px = int(np.clip((K[0, 0] * pt0 / pz) + K[0, 2], -w, 2 * w))
+            py = int(np.clip((K[1, 1] * pt1 / pz) + K[1, 2], -h, 2 * h))
             corners_2d.append([px, py])
 
         # 8. Visualization overlay

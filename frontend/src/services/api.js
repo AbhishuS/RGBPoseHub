@@ -74,6 +74,7 @@ export const mlAPI = {
   forensicAnalyzeJson: (data) => api.post('/ml/forensic-analyze', data),
   estimatePose: (data) => api.post('/ml/estimate-pose', data),
   getPointCloud3D: (data) => api.post('/ml/point-cloud-3d', data),
+  detectObjects: (data) => api.post('/ml/detect-objects', data),
   getSampleRGBDImages: () => api.get('/ml/sample-rgbd-images'),
 };
 

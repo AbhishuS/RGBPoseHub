@@ -19,12 +19,25 @@ import base64
 import numpy as np
 from PIL import Image, ImageChops, ImageEnhance, ImageOps, ImageFilter
 
+# ── HEIC/HEIF support ─────────────────────────────────────────────────────────
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    _HEIF_OK = True
+except ImportError:
+    _HEIF_OK = False
+
 
 class ForensicAnalyzer:
     """Complete Sherloq forensic inspection and RGB-D depth validation engine."""
 
     def __init__(self, upload_folder=None):
         self.upload_folder = upload_folder
+
+    def _open_image(self, path):
+        """Open image at path, supporting HEIC/HEIF, PNG, JPG, and PDF containing RGB images."""
+        from module_data.rgbd_utils import _pil_open_any
+        return _pil_open_any(path)
 
     def analyze(self, image_path, depth_image_path=None):
         """
@@ -34,7 +47,11 @@ class ForensicAnalyzer:
         if not os.path.exists(image_path):
             return {'error': 'File not found'}
 
-        img = Image.open(image_path)
+        try:
+            img = self._open_image(image_path)
+        except Exception as e:
+            return {'error': f'Cannot open image: {e}'}
+
         file_size = os.path.getsize(image_path)
 
         # 1. Tools & General
@@ -43,7 +60,7 @@ class ForensicAnalyzer:
         hex_dump = self._generate_hex_dump(image_path)
 
         # 2. Metadata & Geolocation
-        exif_info = self._extract_exif_and_gps(img)
+        exif_info = self._extract_exif_and_gps(img, image_path)
 
         # 3. Colors & Space Conversions
         color_analysis = self._analyze_color_channels(img)
@@ -85,15 +102,38 @@ class ForensicAnalyzer:
     def _extract_metadata(self, path, img, size_bytes):
         w, h = img.size
         mode = img.mode
-        fmt = img.format or os.path.splitext(path)[1].replace('.', '').upper()
+        ext = os.path.splitext(path)[1].replace('.', '').upper()
+        raw_fmt = getattr(img, 'format', None) or ext
+
+        # Normalize display format cleanly
+        if raw_fmt in ('HEIF', 'HEIC'):
+            display_fmt = 'HEIC'
+        elif raw_fmt in ('JPEG', 'JPG'):
+            display_fmt = 'JPEG'
+        elif raw_fmt == 'PNG':
+            display_fmt = 'PNG'
+        elif 'PDF' in str(raw_fmt) or ext == 'PDF':
+            display_fmt = raw_fmt if 'PDF' in str(raw_fmt) else 'PDF'
+        else:
+            display_fmt = raw_fmt
+
         num_channels = len(img.getbands()) if hasattr(img, 'getbands') else 3
 
         bit_depth = 8
         if mode in ('I;16', 'I;16B', 'I;16L', 'I', 'F'):
             bit_depth = 16 if '16' in mode else 32
 
+        pdf_info = None
+        if hasattr(img, '_pdf_source'):
+            pdf_info = {
+                'source': img._pdf_source,
+                'page_count': getattr(img, '_pdf_page_count', 1),
+                'embedded_images_count': getattr(img, '_pdf_images_count', 0),
+            }
+
         return {
-            'format': fmt,
+            'format': display_fmt,
+            'raw_format': raw_fmt,
             'dimensions': f"{w} × {h} px",
             'width': w,
             'height': h,
@@ -103,6 +143,7 @@ class ForensicAnalyzer:
             'bit_depth': f"{bit_depth}-bit per channel",
             'file_size_bytes': size_bytes,
             'file_size_formatted': f"{round(size_bytes / 1024, 2)} KB" if size_bytes < 1048576 else f"{round(size_bytes / 1048576, 2)} MB",
+            'pdf_info': pdf_info,
         }
 
     def _calculate_hashes(self, path, img):
@@ -159,27 +200,112 @@ class ForensicAnalyzer:
         except Exception:
             return {'magic_bytes': 'N/A', 'rows': []}
 
-    def _extract_exif_and_gps(self, img):
+    def _extract_exif_and_gps(self, img, image_path=None):
         exif_data = {}
         gps_data = None
+
+        # ── Strategy 1: standard PIL EXIF (JPEG, TIFF, some HEIC) ──────────
         try:
-            raw_exif = img._getexif()
+            # getexif() is the modern PIL API; _getexif() is JPEG-only legacy
+            raw_exif = None
+            if hasattr(img, 'getexif'):
+                raw_exif = img.getexif()          # returns IFDDictionary
+            elif hasattr(img, '_getexif'):
+                raw_exif = img._getexif() or {}   # JPEG legacy fallback
+
             if raw_exif:
-                from PIL.ExifTags import TAGS, GPSTAGS
-                for tag_id, val in raw_exif.items():
-                    tag_name = TAGS.get(tag_id, tag_id)
-                    if tag_name == 'GPSInfo':
+                from PIL.ExifTags import TAGS, GPSTAGS, IFD
+                # Pillow's standard way to retrieve the GPS IFD dictionary
+                try:
+                    gps_ifd = raw_exif.get_ifd(IFD.GPSInfo) if hasattr(raw_exif, 'get_ifd') else None
+                    if not gps_ifd and hasattr(raw_exif, 'get_ifd'):
+                        gps_ifd = raw_exif.get_ifd(34853)
+                    if gps_ifd:
                         gps_info = {}
-                        for t in val:
+                        for t, v in gps_ifd.items():
                             sub_tag = GPSTAGS.get(t, t)
-                            gps_info[sub_tag] = val[t]
+                            gps_info[sub_tag] = v
                         gps_data = self._parse_gps_coords(gps_info)
+                except Exception:
+                    pass
+
+                for tag_id, val in raw_exif.items():
+                    tag_name = TAGS.get(tag_id, str(tag_id))
+                    if tag_name == 'GPSInfo' and not (gps_data and gps_data.get('has_location')):
+                        gps_info = {}
+                        if isinstance(val, dict):
+                            for t, v in val.items():
+                                sub_tag = GPSTAGS.get(t, t)
+                                gps_info[sub_tag] = v
+                            gps_data = self._parse_gps_coords(gps_info)
                     elif isinstance(val, (str, int, float)):
                         exif_data[str(tag_name)] = str(val)
                     elif isinstance(val, bytes):
                         exif_data[str(tag_name)] = val.hex()[:32]
         except Exception:
             pass
+
+        # Also check XMP if GPS not yet found
+        if not (gps_data and gps_data.get('has_location')) and hasattr(img, 'info'):
+            xmp = img.info.get('xmp')
+            if xmp:
+                gps_data = self._parse_xmp_gps(xmp)
+
+        # ── Strategy 2: pillow_heif metadata for HEIC/HEIF files ───────────
+        if _HEIF_OK and not exif_data:
+            try:
+                heif_file = pillow_heif.open_heif(img.filename if hasattr(img, 'filename') else '')
+                for heif_img in heif_file:
+                    info = getattr(heif_img, 'info', {})
+                    # EXIF bytes stored under 'exif' key
+                    raw_bytes = info.get('exif', b'')
+                    if raw_bytes:
+                        from PIL.ExifTags import TAGS, GPSTAGS
+                        exif_img = Image.open(io.BytesIO(raw_bytes)) if raw_bytes[:3] == b'Exif' else None
+                        # Parse raw EXIF bytes directly
+                        import struct
+                        try:
+                            pil_tmp = Image.frombytes('L', (1, 1), b'\x00')
+                            pil_tmp.info['exif'] = raw_bytes
+                            raw_dict = pil_tmp.getexif()
+                            for tag_id, val in raw_dict.items():
+                                tag_name = TAGS.get(tag_id, str(tag_id))
+                                if tag_name == 'GPSInfo':
+                                    gps_info = {}
+                                    if isinstance(val, dict):
+                                        for t, v in val.items():
+                                            sub_tag = GPSTAGS.get(t, t)
+                                            gps_info[sub_tag] = v
+                                    gps_data = self._parse_gps_coords(gps_info)
+                                elif isinstance(val, (str, int, float)):
+                                    exif_data[str(tag_name)] = str(val)
+                        except Exception:
+                            pass
+                    # XMP metadata (contains GPS for some iOS versions)
+                    xmp = info.get('xmp', b'')
+                    if xmp and not gps_data:
+                        gps_data = self._parse_xmp_gps(xmp)
+                    break
+            except Exception:
+                pass
+
+        # ── Strategy 3: PDF Document Metadata ───────────────────────────────
+        if image_path and (image_path.lower().endswith('.pdf') or hasattr(img, '_pdf_source')):
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(image_path)
+                meta = reader.metadata
+                if meta:
+                    for k, v in meta.items():
+                        clean_k = str(k).lstrip('/')
+                        exif_data[f"PDF:{clean_k}"] = str(v)
+                exif_data["PDF:TotalPages"] = str(len(reader.pages))
+                if hasattr(img, '_pdf_source'):
+                    exif_data["PDF:ImageExtractionMode"] = str(img._pdf_source)
+                if hasattr(img, '_pdf_images_count'):
+                    exif_data["PDF:EmbeddedImagesCount"] = str(img._pdf_images_count)
+            except Exception:
+                pass
 
         return {
             'has_exif': len(exif_data) > 0,
@@ -191,8 +317,12 @@ class ForensicAnalyzer:
     def _parse_gps_coords(self, gps_info):
         try:
             def convert_to_degrees(value):
-                d, m, s = value
-                return float(d) + float(m) / 60.0 + float(s) / 3600.0
+                # value may be tuple/list of IFDRational, floats, or fractions
+                parts = list(value)
+                d = float(parts[0])
+                m = float(parts[1]) if len(parts) > 1 else 0.0
+                s = float(parts[2]) if len(parts) > 2 else 0.0
+                return d + m / 60.0 + s / 3600.0
 
             lat_val = gps_info.get('GPSLatitude')
             lat_ref = gps_info.get('GPSLatitudeRef', 'N')
@@ -201,9 +331,11 @@ class ForensicAnalyzer:
 
             if lat_val and lon_val:
                 lat = convert_to_degrees(lat_val)
-                if lat_ref != 'N': lat = -lat
+                if str(lat_ref).strip().upper() not in ('N', ''):
+                    lat = -lat
                 lon = convert_to_degrees(lon_val)
-                if lon_ref != 'E': lon = -lon
+                if str(lon_ref).strip().upper() not in ('E', ''):
+                    lon = -lon
                 return {
                     'has_location': True,
                     'latitude': round(lat, 6),
@@ -214,6 +346,32 @@ class ForensicAnalyzer:
         except Exception:
             pass
         return {'has_location': False, 'formatted': 'No GPS coordinates found'}
+
+    def _parse_xmp_gps(self, xmp_bytes):
+        """Extract GPS from Apple XMP metadata block embedded in HEIC."""
+        try:
+            import re
+            xmp_str = xmp_bytes.decode('utf-8', errors='ignore') if isinstance(xmp_bytes, bytes) else xmp_bytes
+            lat_match = re.search(r'GPSLatitude["\s=>]+([\d.]+)([NS])', xmp_str, re.IGNORECASE)
+            lon_match = re.search(r'GPSLongitude["\s=>]+([\d.]+)([EW])', xmp_str, re.IGNORECASE)
+            if lat_match and lon_match:
+                lat = float(lat_match.group(1))
+                if lat_match.group(2).upper() == 'S':
+                    lat = -lat
+                lon = float(lon_match.group(1))
+                if lon_match.group(2).upper() == 'W':
+                    lon = -lon
+                return {
+                    'has_location': True,
+                    'latitude': round(lat, 6),
+                    'longitude': round(lon, 6),
+                    'formatted': f"{lat:.6f}°, {lon:.6f}°",
+                    'maps_link': f"https://www.google.com/maps?q={lat},{lon}",
+                    'source': 'XMP metadata',
+                }
+        except Exception:
+            pass
+        return None
 
     def _analyze_color_channels(self, img):
         rgb_img = img.convert('RGB')
@@ -537,17 +695,40 @@ class ForensicAnalyzer:
         has_depth = False
         depth_array = None
         depth_source = None
+        from module_data.rgbd_utils import is_heic_file, _pil_open_any
+        is_heic = is_heic_file(image_path)
 
-        if img.mode in ('RGBA', 'LA') or len(img.getbands()) == 4:
-            arr = np.array(img)
-            ch4 = arr[:, :, 3]
-            ch4_var = np.var(ch4)
-            ch4_unique = np.unique(ch4)
-            if len(ch4_unique) > 5 and ch4_var > 1.0:
-                has_depth = True
-                depth_array = ch4.astype(np.float32)
-                depth_source = '4th Image Channel (RGBD Depth)'
+        # ── A: HEIC with embedded Portrait depth (highest priority) ────────
+        if is_heic and _HEIF_OK:
+            try:
+                hf = pillow_heif.open_heif(image_path, convert_hdr_to_8bit=False, bgr_mode=False)
+                for hi in hf:
+                    aux_type = getattr(hi, 'info', {}).get('aux_type', '') or ''
+                    if 'depth' in aux_type.lower() or 'disparity' in aux_type.lower():
+                        depth_pil = hi.to_pillow()
+                        d_arr = np.array(depth_pil, dtype=np.float32)
+                        if d_arr.ndim == 3:
+                            d_arr = d_arr[:, :, 0]
+                        has_depth = True
+                        depth_array = d_arr
+                        depth_source = 'iPhone Portrait embedded depth (HEIC auxiliary stream)'
+                        break
+            except Exception:
+                pass
 
+        # ── B: 4-channel RGBA (depth in alpha) ─────────────────────────────
+        if not has_depth:
+            if img.mode in ('RGBA', 'LA') or len(img.getbands()) == 4:
+                arr = np.array(img)
+                ch4 = arr[:, :, 3]
+                ch4_var = np.var(ch4)
+                ch4_unique = np.unique(ch4)
+                if len(ch4_unique) > 5 and ch4_var > 1.0:
+                    has_depth = True
+                    depth_array = ch4.astype(np.float32)
+                    depth_source = '4th Image Channel (RGBD Depth)'
+
+        # ── C: 16-bit depth mode ───────────────────────────────────────────
         if not has_depth and img.mode in ('I;16', 'I;16B', 'I;16L', 'I', 'F'):
             arr = np.array(img, dtype=np.float32)
             if np.var(arr) > 0:
@@ -555,16 +736,36 @@ class ForensicAnalyzer:
                 depth_array = arr
                 depth_source = '16-Bit Depth Mode'
 
+        # ── D: Explicit separate depth file ────────────────────────────────
         if not has_depth and depth_image_path and os.path.exists(depth_image_path):
             try:
-                d_img = Image.open(depth_image_path)
+                d_img = Image.open(depth_image_path)  # heif opener registered
                 d_arr = np.array(d_img, dtype=np.float32)
-                if len(d_arr.shape) == 3: d_arr = d_arr[:, :, 0]
+                if len(d_arr.shape) == 3:
+                    d_arr = d_arr[:, :, 0]
                 has_depth = True
                 depth_array = d_arr
                 depth_source = f'Separate Depth File ({os.path.basename(depth_image_path)})'
-            except Exception: pass
+                # Also attempt to extract embedded depth from the HEIC depth file
+                if os.path.splitext(depth_image_path)[-1].lower() in ('.heic', '.heif') and _HEIF_OK:
+                    try:
+                        hf2 = pillow_heif.open_heif(depth_image_path, convert_hdr_to_8bit=False, bgr_mode=False)
+                        for hi2 in hf2:
+                            aux_type2 = getattr(hi2, 'info', {}).get('aux_type', '') or ''
+                            if 'depth' in aux_type2.lower() or 'disparity' in aux_type2.lower():
+                                depth_pil2 = hi2.to_pillow()
+                                d_arr2 = np.array(depth_pil2, dtype=np.float32)
+                                if d_arr2.ndim == 3:
+                                    d_arr2 = d_arr2[:, :, 0]
+                                depth_array = d_arr2
+                                depth_source = 'Depth file — HEIC embedded Portrait depth'
+                                break
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
+        # ── E: Auto-discover companion depth file ──────────────────────────
         if not has_depth and image_path:
             dir_name, base_name = os.path.split(image_path)
             fname_no_ext = os.path.splitext(base_name)[0]
@@ -586,12 +787,14 @@ class ForensicAnalyzer:
                     try:
                         d_img = Image.open(cand_path)
                         d_arr = np.array(d_img, dtype=np.float32)
-                        if len(d_arr.shape) == 3: d_arr = d_arr[:, :, 0]
+                        if len(d_arr.shape) == 3:
+                            d_arr = d_arr[:, :, 0]
                         has_depth = True
                         depth_array = d_arr
                         depth_source = f'Associated Depth File ({os.path.basename(cand_path)})'
                         break
-                    except Exception: pass
+                    except Exception:
+                        pass
 
         if has_depth and depth_array is not None:
             valid_mask = depth_array > 0

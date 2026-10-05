@@ -13,12 +13,13 @@ import numpy as np
 from module_data.rgbd_utils import load_rgbd, get_default_camera_matrix, create_point_cloud_payload
 from module_ml.track_a_efficientpose import TrackAEfficientPoseEngine
 from module_ml.track_b_pnp import TrackBPnPEngine
+from module_ml.object_detector import ObjectDetector
 
 
 class PoseEstimator:
     """
     Unified 6D Object Pose Estimation Coordinator.
-    Provides dual-track pose estimation and interactive 3D point cloud generation.
+    Provides targeted multi-object pinpointing, dual-track pose estimation, and interactive 3D point cloud generation.
     """
 
     def __init__(self, model_dir=None, dataset_dir=None):
@@ -29,10 +30,21 @@ class PoseEstimator:
         self.track_a = TrackAEfficientPoseEngine(model_path=model_weights)
         self.track_b = TrackBPnPEngine()
 
-    def estimate_pose(self, image_path, depth_path=None, depth_stats=None,
-                      prediction_info=None, track='both', camera_params=None):
+    def detect_candidate_objects(self, image_path, depth_path=None):
         """
-        Estimates 6D Object Pose using Track A, Track B, or both.
+        Extracts all candidate objects from the RGB-D image for multi-object selection.
+        """
+        if not os.path.exists(image_path):
+            return []
+        rgb, depth_m, _ = load_rgbd(image_path, depth_path=depth_path)
+        filename = os.path.basename(image_path)
+        return ObjectDetector.detect_objects(rgb, depth_m, filename=filename)
+
+    def estimate_pose(self, image_path, depth_path=None, depth_stats=None,
+                      prediction_info=None, track='both', camera_params=None,
+                      target_point=None, bounding_box=None, selected_object_name=None):
+        """
+        Estimates 6D Object Pose for a specific targeted object using Track A, Track B, or both.
         
         Args:
             image_path: Path to RGB or 4-channel RGBA image.
@@ -41,11 +53,14 @@ class PoseEstimator:
             prediction_info: Optional dictionary with class_name and confidence_pct.
             track: 'track_a', 'track_b', or 'both' (default).
             camera_params: Optional dict {fx, fy, cx, cy}.
+            target_point: Optional pinpoint coordinate {'x': ..., 'y': ...}.
+            bounding_box: Optional [xmin, ymin, xmax, ymax].
+            selected_object_name: Optional explicit name of the targeted object.
         
         Returns:
             dict containing:
               - status: 'success'
-              - object_name, confidence_pct
+              - object_name, confidence_pct, candidate_objects
               - track_a: results if track in ('track_a', 'both')
               - track_b: results if track in ('track_b', 'both')
               - comparison: comparative metrics if track == 'both'
@@ -58,8 +73,12 @@ class PoseEstimator:
         # 1. Load RGB and Depth
         rgb, depth_m, depth_info = load_rgbd(image_path, depth_path=depth_path)
         h, w = rgb.shape[:2]
+        filename = os.path.basename(image_path)
 
-        # 2. Camera Matrix K
+        # 2. Detect all candidate objects in scene
+        detected_objects = ObjectDetector.detect_objects(rgb, depth_m, filename=filename)
+
+        # 3. Camera Matrix K
         if camera_params:
             K = get_default_camera_matrix(
                 width=w, height=h,
@@ -71,9 +90,29 @@ class PoseEstimator:
         else:
             K = get_default_camera_matrix(width=w, height=h)
 
-        # 3. Label and confidence
-        class_name = prediction_info.get('class_name', 'Target Object') if prediction_info else 'Target Object'
+        # 4. Resolve target object label & bounding box
+        class_name = selected_object_name
+        if not class_name:
+            if prediction_info and prediction_info.get('class_name'):
+                class_name = prediction_info['class_name']
+            elif detected_objects:
+                class_name = detected_objects[0]['label']
+            else:
+                class_name = 'Target Object'
+
         confidence = float(prediction_info.get('confidence_pct', 92.5)) if prediction_info else 92.5
+
+        # If user clicked pinpoint coordinates but didn't supply bounding box
+        if target_point and not bounding_box:
+            resolved = ObjectDetector.resolve_target_from_click(
+                rgb, depth_m,
+                target_point.get('x_norm', target_point.get('x', w / 2.0) / w if target_point.get('x', 0) > 1.0 else target_point.get('x', 0.5)),
+                target_point.get('y_norm', target_point.get('y', h / 2.0) / h if target_point.get('y', 0) > 1.0 else target_point.get('y', 0.5)),
+                objects=detected_objects
+            )
+            bounding_box = resolved['bbox']
+            if not selected_object_name:
+                class_name = resolved['label']
 
         res_a = None
         res_b = None
@@ -81,13 +120,15 @@ class PoseEstimator:
         # Execute Track A (EfficientPose)
         if track in ('track_a', 'both'):
             res_a = self.track_a.estimate_pose(
-                rgb, depth_m, class_name=class_name, confidence=confidence, K=K
+                rgb, depth_m, class_name=class_name, confidence=confidence, K=K,
+                target_point=target_point, bounding_box=bounding_box
             )
 
         # Execute Track B (Proper PnP + RANSAC)
         if track in ('track_b', 'both'):
             res_b = self.track_b.estimate_pose(
-                rgb, depth_m, class_name=class_name, confidence=confidence, K=K
+                rgb, depth_m, class_name=class_name, confidence=confidence, K=K,
+                target_point=target_point, bounding_box=bounding_box
             )
 
         # 4. Generate Interactive 3D Point Cloud for Three.js
@@ -129,6 +170,12 @@ class PoseEstimator:
             'status': 'success',
             'object_name': class_name,
             'confidence_pct': confidence,
+            'candidate_objects': detected_objects,
+            'selected_target': {
+                'point': target_point,
+                'bounding_box': bounding_box,
+                'object_name': class_name,
+            },
             'depth_info': depth_info,
             'track_selected': track,
             'track_a': res_a,

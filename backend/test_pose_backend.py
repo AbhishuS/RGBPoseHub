@@ -35,8 +35,8 @@ def run_tests():
 
     samples_dir = os.path.join(backend_dir, 'uploads', 'samples')
     os.makedirs(samples_dir, exist_ok=True)
-    sample_file = os.path.join(samples_dir, 'sample_rgbd_box.png')
-    depth_pair_file = os.path.join(samples_dir, 'sample_rgbd_box_depth.png')
+    sample_file = os.path.join(samples_dir, 'sample_rgbd_warehouse.png')
+    depth_pair_file = os.path.join(samples_dir, 'sample_rgbd_warehouse_depth.png')
 
     if not os.path.exists(sample_file):
         print("\nGenerating sample RGB-D test images...")
@@ -152,7 +152,7 @@ def run_tests():
 
         # Test POST /api/ml/estimate-pose
         res_api_pose = client.post('/api/ml/estimate-pose', json={
-            'filename': 'sample_rgbd_box.png',
+            'filename': 'sample_rgbd_warehouse.png',
             'track': 'both'
         }, headers=headers)
         assert res_api_pose.status_code == 200, f"Pose API failed: {res_api_pose.get_json()}"
@@ -163,7 +163,7 @@ def run_tests():
 
         # Test POST /api/ml/point-cloud-3d
         res_api_cloud = client.post('/api/ml/point-cloud-3d', json={
-            'filename': 'sample_rgbd_box.png',
+            'filename': 'sample_rgbd_warehouse.png',
             'max_points': 20000
         }, headers=headers)
         assert res_api_cloud.status_code == 200, f"Point cloud API failed: {res_api_cloud.get_json()}"
