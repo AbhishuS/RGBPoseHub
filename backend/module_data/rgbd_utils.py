@@ -243,7 +243,7 @@ def load_rgbd(rgb_or_rgba_path, depth_path=None):
     depth_raw  = None        # raw integer array (uint8 or uint16)
     depth_format = None
 
-    # 2a: Explicit separate depth file supplied
+    # 2a: Explicit separate depth file supplied (user provided depth map)
     if depth_path and os.path.exists(depth_path):
         if is_heic_file(depth_path):
             # A HEIC depth file (e.g. exported from Lightroom)
@@ -256,12 +256,7 @@ def load_rgbd(rgb_or_rgba_path, depth_path=None):
                 depth_raw = np.array(_pil_open_any(depth_path))
             if depth_raw is not None and depth_raw.ndim == 3:
                 depth_raw = depth_raw[:, :, 0]
-
-    # 2b: HEIC with embedded Portrait depth
-    elif is_heic:
-        depth_raw = _extract_heic_depth(rgb_or_rgba_path)
-        if depth_raw is not None:
-            depth_format = "iPhone Portrait embedded depth"
+        depth_format = f"User Depth File ({os.path.basename(depth_path)})"
 
     # ── Step 3: convert raw depth array → metric float32 ──────────────────
     rgb = np.array(img_pil.convert('RGB'), dtype=np.uint8)

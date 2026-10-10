@@ -105,17 +105,17 @@ class ForensicAnalyzer:
         ext = os.path.splitext(path)[1].replace('.', '').upper()
         raw_fmt = getattr(img, 'format', None) or ext
 
-        # Normalize display format cleanly
-        if raw_fmt in ('HEIF', 'HEIC'):
-            display_fmt = 'HEIC'
-        elif raw_fmt in ('JPEG', 'JPG'):
+        # Strictly preserve user's uploaded file format
+        if ext in ('JPG', 'JPEG'):
             display_fmt = 'JPEG'
-        elif raw_fmt == 'PNG':
+        elif ext == 'PNG':
             display_fmt = 'PNG'
-        elif 'PDF' in str(raw_fmt) or ext == 'PDF':
-            display_fmt = raw_fmt if 'PDF' in str(raw_fmt) else 'PDF'
+        elif ext == 'PDF':
+            display_fmt = 'PDF'
+        elif ext in ('HEIC', 'HEIF'):
+            display_fmt = 'HEIC'
         else:
-            display_fmt = raw_fmt
+            display_fmt = ext or getattr(img, 'format', 'RGB')
 
         num_channels = len(img.getbands()) if hasattr(img, 'getbands') else 3
 
@@ -695,28 +695,22 @@ class ForensicAnalyzer:
         has_depth = False
         depth_array = None
         depth_source = None
-        from module_data.rgbd_utils import is_heic_file, _pil_open_any
-        is_heic = is_heic_file(image_path)
+        from module_data.rgbd_utils import _pil_open_any
 
-        # ── A: HEIC with embedded Portrait depth (highest priority) ────────
-        if is_heic and _HEIF_OK:
+        # ── 1: User-supplied explicit depth map (highest priority) ─────────
+        if depth_image_path and os.path.exists(depth_image_path):
             try:
-                hf = pillow_heif.open_heif(image_path, convert_hdr_to_8bit=False, bgr_mode=False)
-                for hi in hf:
-                    aux_type = getattr(hi, 'info', {}).get('aux_type', '') or ''
-                    if 'depth' in aux_type.lower() or 'disparity' in aux_type.lower():
-                        depth_pil = hi.to_pillow()
-                        d_arr = np.array(depth_pil, dtype=np.float32)
-                        if d_arr.ndim == 3:
-                            d_arr = d_arr[:, :, 0]
-                        has_depth = True
-                        depth_array = d_arr
-                        depth_source = 'iPhone Portrait embedded depth (HEIC auxiliary stream)'
-                        break
+                d_img = _pil_open_any(depth_image_path)
+                d_arr = np.array(d_img, dtype=np.float32)
+                if len(d_arr.shape) == 3:
+                    d_arr = d_arr[:, :, 0]
+                has_depth = True
+                depth_array = d_arr
+                depth_source = f'User-Supplied Depth Map ({os.path.basename(depth_image_path)})'
             except Exception:
                 pass
 
-        # ── B: 4-channel RGBA (depth in alpha) ─────────────────────────────
+        # ── 2: 4-channel RGBA (depth in alpha) ─────────────────────────────
         if not has_depth:
             if img.mode in ('RGBA', 'LA') or len(img.getbands()) == 4:
                 arr = np.array(img)
@@ -728,42 +722,13 @@ class ForensicAnalyzer:
                     depth_array = ch4.astype(np.float32)
                     depth_source = '4th Image Channel (RGBD Depth)'
 
-        # ── C: 16-bit depth mode ───────────────────────────────────────────
+        # ── 3: 16-bit depth mode ───────────────────────────────────────────
         if not has_depth and img.mode in ('I;16', 'I;16B', 'I;16L', 'I', 'F'):
             arr = np.array(img, dtype=np.float32)
             if np.var(arr) > 0:
                 has_depth = True
                 depth_array = arr
                 depth_source = '16-Bit Depth Mode'
-
-        # ── D: Explicit separate depth file ────────────────────────────────
-        if not has_depth and depth_image_path and os.path.exists(depth_image_path):
-            try:
-                d_img = Image.open(depth_image_path)  # heif opener registered
-                d_arr = np.array(d_img, dtype=np.float32)
-                if len(d_arr.shape) == 3:
-                    d_arr = d_arr[:, :, 0]
-                has_depth = True
-                depth_array = d_arr
-                depth_source = f'Separate Depth File ({os.path.basename(depth_image_path)})'
-                # Also attempt to extract embedded depth from the HEIC depth file
-                if os.path.splitext(depth_image_path)[-1].lower() in ('.heic', '.heif') and _HEIF_OK:
-                    try:
-                        hf2 = pillow_heif.open_heif(depth_image_path, convert_hdr_to_8bit=False, bgr_mode=False)
-                        for hi2 in hf2:
-                            aux_type2 = getattr(hi2, 'info', {}).get('aux_type', '') or ''
-                            if 'depth' in aux_type2.lower() or 'disparity' in aux_type2.lower():
-                                depth_pil2 = hi2.to_pillow()
-                                d_arr2 = np.array(depth_pil2, dtype=np.float32)
-                                if d_arr2.ndim == 3:
-                                    d_arr2 = d_arr2[:, :, 0]
-                                depth_array = d_arr2
-                                depth_source = 'Depth file — HEIC embedded Portrait depth'
-                                break
-                    except Exception:
-                        pass
-            except Exception:
-                pass
 
         # ── E: Auto-discover companion depth file ──────────────────────────
         if not has_depth and image_path:

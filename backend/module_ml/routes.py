@@ -42,9 +42,7 @@ def _sanitize_for_json(val):
 def _save_upload(file_storage, upload_dir, prefix=''):
     """
     Save a werkzeug FileStorage object to *upload_dir*.
-
-    Supports JPG, PNG, HEIC/HEIF, and PDF (containing RGB images).
-    Inspects magic bytes if extension is unknown or mismatched.
+    Preserves user file format (JPG, PNG, PDF, HEIC, etc.) without converting.
 
     Returns:
         (saved_path, ext)  — absolute path and lowercase extension
@@ -53,30 +51,88 @@ def _save_upload(file_storage, upload_dir, prefix=''):
     raw_name = file_storage.filename or 'upload'
     ext = raw_name.rsplit('.', 1)[-1].lower() if '.' in raw_name else ''
 
-    # Check magic bytes for reliable extension determination
-    header = b''
-    try:
-        header = file_storage.stream.read(32)
-        file_storage.stream.seek(0)
-    except Exception:
-        pass
-
-    if header.startswith(b'%PDF'):
-        ext = 'pdf'
-    elif header.startswith(b'\x89PNG'):
-        ext = 'png'
-    elif header.startswith(b'\xff\xd8\xff'):
+    if ext in ('jpg', 'jpeg'):
         ext = 'jpg'
-    elif b'ftyp' in header and any(b in header for b in (b'heic', b'mif1', b'msf1', b'heix', b'hevc')):
-        ext = 'heic'
-    elif ext not in _ALLOWED_IMAGE_EXTS:
-        ext = 'png'
+    elif ext in ('png', 'pdf', 'heic', 'heif', 'tiff', 'tif', 'bmp', 'webp'):
+        pass
+    else:
+        # Only check fallback if extension was completely missing or unknown
+        header = b''
+        try:
+            header = file_storage.stream.read(16)
+            file_storage.stream.seek(0)
+        except Exception:
+            pass
+        if header.startswith(b'%PDF'):
+            ext = 'pdf'
+        elif header.startswith(b'\x89PNG'):
+            ext = 'png'
+        elif header.startswith(b'\xff\xd8\xff'):
+            ext = 'jpg'
+        else:
+            ext = 'png'
 
     filename = f'{prefix}{_uuid.uuid4().hex}.{ext}'
     path = os.path.join(upload_dir, filename)
     file_storage.save(path)
     return path, ext
 
+
+def _get_image_preview_b64(image_path):
+    """
+    Returns (base64_str, mime_type, display_format) preserving original format
+    (JPG as JPEG, PNG as PNG, etc.). Converts HEIC/PDF to browser-renderable formats.
+    """
+    import base64
+    import io
+    ext = os.path.splitext(image_path)[-1].lower().lstrip('.')
+    if ext in ('jpg', 'jpeg'):
+        save_fmt = 'JPEG'
+        mime = 'image/jpeg'
+        fmt_name = 'JPEG'
+    elif ext == 'png':
+        save_fmt = 'PNG'
+        mime = 'image/png'
+        fmt_name = 'PNG'
+    elif ext in ('heic', 'heif'):
+        save_fmt = 'JPEG'
+        mime = 'image/jpeg'
+        fmt_name = 'HEIC'
+    elif ext == 'pdf':
+        save_fmt = 'PNG'
+        mime = 'image/png'
+        fmt_name = 'PDF'
+    elif ext in ('webp', 'bmp', 'tiff', 'tif'):
+        save_fmt = 'PNG'
+        mime = 'image/png'
+        fmt_name = ext.upper()
+    else:
+        save_fmt = 'PNG'
+        mime = 'image/png'
+        fmt_name = ext.upper() if ext else 'PNG'
+
+    try:
+        from module_data.rgbd_utils import _pil_open_any
+        _orig_pil = _pil_open_any(image_path)
+        if _orig_pil.mode in ('RGBA', 'LA') and save_fmt == 'JPEG':
+            _orig_pil = _orig_pil.convert('RGB')
+        elif _orig_pil.mode not in ('RGB', 'RGBA') and save_fmt == 'JPEG':
+            _orig_pil = _orig_pil.convert('RGB')
+
+        _orig_buf = io.BytesIO()
+        if save_fmt == 'JPEG':
+            _orig_pil.convert('RGB').save(_orig_buf, format='JPEG', quality=95)
+        else:
+            _orig_pil.save(_orig_buf, format='PNG')
+        b64 = base64.b64encode(_orig_buf.getvalue()).decode('utf-8')
+        return b64, mime, fmt_name
+    except Exception:
+        try:
+            with open(image_path, 'rb') as f:
+                b64 = base64.b64encode(f.read()).decode('utf-8')
+            return b64, mime, fmt_name
+        except Exception:
+            return '', mime, fmt_name
 
 
 def _get_trainer():
@@ -214,17 +270,8 @@ def predict():
         annotated = visualizer.annotate_image(image_path, results['predictions'])
         chart_data = visualizer.generate_confidence_chart_data(results['predictions'])
 
-    # Read original image as base64 (supporting JPG, PNG, HEIC, PDF)
-    import base64
-    try:
-        from module_data.rgbd_utils import _pil_open_any
-        _orig_pil = _pil_open_any(image_path).convert('RGB')
-        _orig_buf = __import__('io').BytesIO()
-        _orig_pil.save(_orig_buf, format='JPEG', quality=90)
-        original_b64 = base64.b64encode(_orig_buf.getvalue()).decode('utf-8')
-    except Exception:
-        with open(image_path, 'rb') as f:
-            original_b64 = base64.b64encode(f.read()).decode('utf-8')
+    # Read original image as base64 preserving format
+    original_b64, image_mime, image_format = _get_image_preview_b64(image_path)
 
     log_activity(user_id, 'image_analysis', 'ml',
                  f'Analyzed image: {filename}',
@@ -238,6 +285,8 @@ def predict():
     return jsonify({
         'results': results,
         'original_image': original_b64,
+        'image_mime': image_mime,
+        'image_format': image_format,
         'annotated_image': annotated,
         'chart_data': chart_data,
         'filename': filename,
@@ -266,9 +315,7 @@ def predict_dataset_image(filename):
         annotated = visualizer.annotate_image(image_path, results['predictions'])
         chart_data = visualizer.generate_confidence_chart_data(results['predictions'])
 
-    import base64
-    with open(image_path, 'rb') as f:
-        original_b64 = base64.b64encode(f.read()).decode('utf-8')
+    original_b64, image_mime, image_format = _get_image_preview_b64(image_path)
 
     log_activity(user_id, 'dataset_analysis', 'ml',
                  f'Analyzed dataset image: {filename}',
@@ -277,6 +324,8 @@ def predict_dataset_image(filename):
     return jsonify({
         'results': results,
         'original_image': original_b64,
+        'image_mime': image_mime,
+        'image_format': image_format,
         'annotated_image': annotated,
         'chart_data': chart_data,
     }), 200
@@ -373,34 +422,19 @@ def forensic_analyze():
     if forensic_results.get('error'):
         return jsonify({'error': forensic_results['error']}), 500
 
-    # Detect candidate objects — run whenever we have a valid image
-    # (depth may be embedded in HEIC even if is_rgbd gate wasn't triggered yet)
+    # Detect candidate objects for 6D pose targeting
     candidate_objects = []
-    gatekeeper = forensic_results.get('rgbd_gatekeeper', {})
-    from module_data.rgbd_utils import is_heic_file
-    has_any_depth = gatekeeper.get('is_rgbd') or depth_path or is_heic_file(image_path) or (
-        forensic_results.get('metadata', {}).get('format') in ('HEIC', 'HEIC / HEIF')
-    )
-    if has_any_depth:
-        try:
-            estimator = PoseEstimator(
-                model_dir=current_app.config['MODEL_FOLDER'],
-                dataset_dir=current_app.config['DATASET_FOLDER'],
-            )
-            candidate_objects = estimator.detect_candidate_objects(image_path, depth_path=depth_path)
-        except Exception as e:
-            current_app.logger.warning(f'Candidate object detection error: {e}')
-
-    # Encode original image as base64 for browser preview (HEIC, PDF, etc. converted to JPEG)
-    import base64
     try:
-        _orig_pil = analyzer._open_image(image_path).convert('RGB')
-        _orig_buf = __import__('io').BytesIO()
-        _orig_pil.save(_orig_buf, format='JPEG', quality=90)
-        original_b64 = base64.b64encode(_orig_buf.getvalue()).decode('utf-8')
-    except Exception:
-        with open(image_path, 'rb') as f:
-            original_b64 = base64.b64encode(f.read()).decode('utf-8')
+        estimator = PoseEstimator(
+            model_dir=current_app.config['MODEL_FOLDER'],
+            dataset_dir=current_app.config['DATASET_FOLDER'],
+        )
+        candidate_objects = estimator.detect_candidate_objects(image_path, depth_path=depth_path)
+    except Exception as e:
+        current_app.logger.warning(f'Candidate object detection error: {e}')
+
+    # Encode original image as base64 for browser preview (preserving format: JPG as JPEG, PNG as PNG, etc.)
+    original_b64, image_mime, image_format = _get_image_preview_b64(image_path)
 
     log_activity(user_id, 'forensic_analysis', 'ml',
                  f'Ran Sherloq Forensics & RGB-D Inspection: {filename}',
@@ -414,6 +448,8 @@ def forensic_analyze():
         'forensics': forensic_results,
         'candidate_objects': candidate_objects,
         'original_image': original_b64,
+        'image_mime': image_mime,
+        'image_format': image_format,
         'filename': filename or os.path.basename(image_path),
     })), 200
 
@@ -458,6 +494,8 @@ def detect_objects_endpoint():
 
     resolved_target = None
     if click_x_norm is not None and click_y_norm is not None:
+        from module_data.rgbd_utils import load_rgbd
+        from module_ml.object_detector import ObjectDetector
         rgb, depth_m, _ = load_rgbd(image_path, depth_path=depth_path)
         resolved_target = ObjectDetector.resolve_target_from_click(
             rgb, depth_m, float(click_x_norm), float(click_y_norm), objects=objects

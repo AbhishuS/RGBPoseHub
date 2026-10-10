@@ -171,7 +171,7 @@ class TrackAEfficientPoseEngine:
                       target_point=None, bounding_box=None):
         """
         Executes Track A EfficientPose inference on RGB-D input.
-        
+
         Args:
             rgb: (H, W, 3) uint8 image
             depth_m: (H, W) float32 metric depth map
@@ -180,13 +180,17 @@ class TrackAEfficientPoseEngine:
             K: (3, 3) Camera intrinsic matrix
             target_point: Optional dict {'x': u, 'y': v} in px or normalized 0..1
             bounding_box: Optional [xmin, ymin, xmax, ymax]
-        
+
         Returns:
             dict containing Track A 6D pose estimation metrics.
         """
         h, w = rgb.shape[:2]
         if K is None:
             K = get_default_camera_matrix(width=w, height=h)
+
+        # --- Guard: sanitize depth map (NaN / Inf → 0) ----------------------
+        if not np.all(np.isfinite(depth_m)):
+            depth_m = np.where(np.isfinite(depth_m), depth_m, 0.0).astype(np.float32)
 
         # Normalize depth to 0-1 range for neural input
         depth_norm = np.clip((depth_m - 0.2) / 3.0, 0.0, 1.0)
@@ -341,17 +345,20 @@ class TrackAEfficientPoseEngine:
         }
 
     def _render_pose_visualization(self, rgb, corners_2d, trans, euler, label, conf, K):
-        """Renders 3D bounding box wireframe and XYZ coordinate axes on image."""
+        """
+        Renders Track A pose overlay: 3D wireframe + XYZ axes directly on the image.
+        No 2D bounding box rectangle is drawn in Track A — the result is shown directly.
+        """
         img = Image.fromarray(rgb).convert('RGB')
         draw = ImageDraw.Draw(img)
 
         # 3D Bounding box 12 wireframe edges
         # Front face: 0-1-2-3, Back face: 4-5-6-7, Connecting: 0-4, 1-5, 2-6, 3-7
         edges_front = [(0, 1), (1, 2), (2, 3), (3, 0)]
-        edges_back = [(4, 5), (5, 6), (6, 7), (7, 4)]
-        edges_conn = [(0, 4), (1, 5), (2, 6), (3, 7)]
+        edges_back  = [(4, 5), (5, 6), (6, 7), (7, 4)]
+        edges_conn  = [(0, 4), (1, 5), (2, 6), (3, 7)]
 
-        cyan = (6, 182, 212)
+        cyan    = (6, 182, 212)
         emerald = (16, 185, 129)
 
         # Draw Back Face & Connecting Depth Lines
@@ -381,11 +388,15 @@ class TrackAEfficientPoseEngine:
         draw.line([(cx, cy), (cx - axis_len // 2, cy - axis_len // 2)], fill=(59, 130, 246), width=3)
         draw.text((cx - axis_len // 2 - 12, cy - axis_len // 2 - 12), "Z", fill=(59, 130, 246))
 
-        # Header Badge
-        badge_text = f"Track A (EfficientPose): {label} ({conf:.1f}%) | T=[{trans[0]:.2f}, {trans[1]:.2f}, {trans[2]:.2f}]m"
+        # Header badge (no bounding box — Track A shows direct overlay)
+        badge_text = (
+            f"Track A (EfficientPose): {label} ({conf:.1f}%) | "
+            f"T=[{trans[0]:.2f}, {trans[1]:.2f}, {trans[2]:.2f}]m"
+        )
         draw.rectangle([10, 10, len(badge_text) * 8 + 20, 36], fill=(15, 23, 42, 220))
         draw.text((15, 15), badge_text, fill=(255, 255, 255))
 
         buf = io.BytesIO()
         img.save(buf, format='PNG')
         return base64.b64encode(buf.getvalue()).decode('utf-8')
+

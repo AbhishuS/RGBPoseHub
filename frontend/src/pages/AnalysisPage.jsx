@@ -74,42 +74,74 @@ export default function AnalysisPage() {
     }
   };
 
+  const isValidMediaFile = (file) => {
+    if (!file) return false;
+    const name = (file.name || '').toLowerCase();
+    const type = (file.type || '').toLowerCase();
+    const validExts = ['.jpg', '.jpeg', '.png', '.heic', '.heif', '.pdf', '.tiff', '.tif', '.webp', '.bmp'];
+    const hasValidExt = validExts.some((ext) => name.endsWith(ext));
+    const hasValidType = type.startsWith('image/') || type === 'application/pdf' || type.includes('heic') || type.includes('heif');
+    return hasValidExt || hasValidType;
+  };
+
   const handleSelectFile = (file) => {
-    if (!file || !file.type.startsWith('image/')) {
-      setError('Please select a valid image file');
+    if (!isValidMediaFile(file)) {
+      setError('Please select a valid image or PDF file (JPG, PNG, HEIC, PDF, TIFF)');
       return;
     }
     setError('');
     setSelectedFile(file);
-    const reader = new FileReader();
-    reader.onload = (e) => setPreview(e.target.result);
-    reader.readAsDataURL(file);
+    const name = (file.name || '').toLowerCase();
+    const isPdf = name.endsWith('.pdf') || file.type === 'application/pdf';
+
+    if (isPdf) {
+      setPreview('pdf-document');
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => setPreview(e.target.result);
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSelectDepthFile = (file) => {
-    if (!file) return;
+    if (!isValidMediaFile(file)) {
+      setError('Please select a valid depth map file (PNG, JPG, TIFF, PDF)');
+      return;
+    }
+    setError('');
     setSelectedDepthFile(file);
     setAutoDepth(false);
-    const reader = new FileReader();
-    reader.onload = (e) => setDepthPreview(e.target.result);
-    reader.readAsDataURL(file);
+    const name = (file.name || '').toLowerCase();
+    const isPdf = name.endsWith('.pdf') || file.type === 'application/pdf';
+    if (isPdf) {
+      setDepthPreview('pdf-document');
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => setDepthPreview(e.target.result);
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleForensicAnalysis = async (file, depthFile = null) => {
     const imageFile = file || selectedFile;
     const depth = depthFile || selectedDepthFile;
-    if (!imageFile || !imageFile.type.startsWith('image/')) {
-      setError('Please select a valid image file');
+    if (!isValidMediaFile(imageFile)) {
+      setError('Please select a valid image or PDF file (JPG, PNG, HEIC, PDF)');
       return;
     }
     setError('');
     setForensics(null);
     setPoseResults(null);
 
+    const isPdf = (imageFile.name || '').toLowerCase().endsWith('.pdf') || imageFile.type === 'application/pdf';
     if (!preview) {
-      const reader = new FileReader();
-      reader.onload = (e) => setPreview(e.target.result);
-      reader.readAsDataURL(imageFile);
+      if (isPdf) {
+        setPreview('pdf-document');
+      } else {
+        const reader = new FileReader();
+        reader.onload = (e) => setPreview(e.target.result);
+        reader.readAsDataURL(imageFile);
+      }
     }
 
     setLoading(true);
@@ -131,7 +163,8 @@ export default function AnalysisPage() {
       }
       setClickTarget(null);
       if (res.data.original_image) {
-        setPreview(`data:image/jpeg;base64,${res.data.original_image}`);
+        const mime = res.data.image_mime || 'image/jpeg';
+        setPreview(`data:${mime};base64,${res.data.original_image}`);
       }
     } catch (err) {
       setError(err.response?.data?.error || 'Forensic analysis failed');
@@ -159,7 +192,8 @@ export default function AnalysisPage() {
       }
       setClickTarget(null);
       if (res.data.original_image) {
-        setPreview(`data:image/png;base64,${res.data.original_image}`);
+        const mime = res.data.image_mime || 'image/png';
+        setPreview(`data:${mime};base64,${res.data.original_image}`);
       }
     } catch (err) {
       setError(err.response?.data?.error || 'Analysis failed');
@@ -304,22 +338,32 @@ export default function AnalysisPage() {
                   >
                     {preview ? (
                       <div style={{ textAlign: 'center' }}>
-                        <img src={preview} alt="Selected" style={{ maxHeight: '140px', borderRadius: '8px', marginBottom: '0.5rem' }} />
+                        {preview === 'pdf-document' ? (
+                          <div style={{ padding: '0.8rem', background: 'rgba(239, 68, 68, 0.08)', borderRadius: '8px', border: '1px solid #ef4444', display: 'inline-block', marginBottom: '0.5rem' }}>
+                            <div style={{ fontSize: '2.5rem' }}>📄</div>
+                            <span style={{ fontSize: '0.8rem', color: '#ef4444', fontWeight: 600 }}>PDF Document (RGB Imagery)</span>
+                          </div>
+                        ) : (
+                          <img src={preview} alt="Selected" style={{ maxHeight: '140px', borderRadius: '8px', marginBottom: '0.5rem' }} />
+                        )}
                         <p style={{ fontSize: '0.85rem', color: '#10b981', margin: 0 }}>✓ {selectedFile?.name}</p>
                       </div>
                     ) : (
                       <>
                         <div className="upload-icon">🖼️</div>
-                        <p><strong>Drop your RGB image here</strong> or click to browse</p>
-                        <p className="upload-hint">Color photo: JPG, PNG, TIFF, <strong>HEIC</strong> (iPhone) • Max 20 MB</p>
+                        <p><strong>Drop your RGB image or PDF here</strong> or click to browse</p>
+                        <p className="upload-hint">Color photo: JPG, PNG, TIFF, <strong>HEIC</strong> &amp; <strong>PDF</strong> • Max 20 MB</p>
                       </>
                     )}
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept="image/*,.heic,.heif"
+                      accept="image/*,.heic,.heif,.pdf,application/pdf"
                       hidden
-                      onChange={(e) => e.target.files[0] && handleSelectFile(e.target.files[0])}
+                      onChange={(e) => {
+                        if (e.target.files[0]) handleSelectFile(e.target.files[0]);
+                        e.target.value = '';
+                      }}
                     />
                   </div>
 
@@ -337,7 +381,14 @@ export default function AnalysisPage() {
                     >
                       {selectedDepthFile ? (
                         <div style={{ textAlign: 'center' }}>
-                          {depthPreview && <img src={depthPreview} alt="Depth" style={{ maxHeight: '100px', borderRadius: '8px', marginBottom: '0.5rem', filter: 'grayscale(1) contrast(1.5)' }} />}
+                          {depthPreview === 'pdf-document' ? (
+                            <div style={{ padding: '0.5rem', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '6px', border: '1px solid #3b82f6', display: 'inline-block', marginBottom: '0.5rem' }}>
+                              <div style={{ fontSize: '2rem' }}>📄</div>
+                              <span style={{ fontSize: '0.75rem', color: '#3b82f6', fontWeight: 600 }}>PDF Depth Map</span>
+                            </div>
+                          ) : depthPreview ? (
+                            <img src={depthPreview} alt="Depth" style={{ maxHeight: '100px', borderRadius: '8px', marginBottom: '0.5rem', filter: 'grayscale(1) contrast(1.5)' }} />
+                          ) : null}
                           <p style={{ fontSize: '0.85rem', color: '#10b981', margin: 0 }}>✓ Depth: {selectedDepthFile.name}</p>
                           <button
                             className="btn btn-sm" style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#ef4444' }}
@@ -354,15 +405,18 @@ export default function AnalysisPage() {
                         <>
                           <div style={{ fontSize: '2rem', marginBottom: '0.25rem' }}>📏</div>
                           <p><strong>Drop depth map here</strong> (optional)</p>
-                          <p className="upload-hint">Grayscale depth PNG/TIFF • <strong>iPhone Portrait HEIC</strong> (depth auto-extracted) • 16-bit sensor PNG</p>
+                          <p className="upload-hint">Grayscale depth PNG/TIFF • 16-bit sensor PNG • Depth map image</p>
                         </>
                       )}
                       <input
                         ref={depthInputRef}
                         type="file"
-                        accept="image/*,.heic,.heif"
+                        accept="image/*,.heic,.heif,.pdf,application/pdf"
                         hidden
-                        onChange={(e) => e.target.files[0] && handleSelectDepthFile(e.target.files[0])}
+                        onChange={(e) => {
+                          if (e.target.files[0]) handleSelectDepthFile(e.target.files[0]);
+                          e.target.value = '';
+                        }}
                       />
                     </div>
                   )}
@@ -752,13 +806,16 @@ export default function AnalysisPage() {
                       <h4>Physical File Digest</h4>
                       <table className="info-table" style={{ width: '100%', marginTop: '0.75rem', fontSize: '0.9rem' }}>
                         <tbody>
-                          <tr><td><strong>Format</strong></td><td>{forensics.metadata.format}</td></tr>
+                          <tr><td><strong>Format</strong></td><td><span className="badge" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#38bdf8', fontWeight: 600 }}>{forensics.metadata.format}</span></td></tr>
                           <tr><td><strong>Dimensions</strong></td><td>{forensics.metadata.dimensions}</td></tr>
                           <tr><td><strong>Megapixels</strong></td><td>{forensics.metadata.megapixels} MP</td></tr>
                           <tr><td><strong>Color Mode</strong></td><td>{forensics.metadata.color_mode}</td></tr>
                           <tr><td><strong>Channels</strong></td><td>{forensics.metadata.channels}</td></tr>
                           <tr><td><strong>Bit Depth</strong></td><td>{forensics.metadata.bit_depth}</td></tr>
                           <tr><td><strong>File Size</strong></td><td>{forensics.metadata.file_size_formatted}</td></tr>
+                          {forensics.metadata.pdf_info && (
+                            <tr><td><strong>PDF Pages</strong></td><td>{forensics.metadata.pdf_info.page_count}</td></tr>
+                          )}
                         </tbody>
                       </table>
                     </div>

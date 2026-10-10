@@ -156,7 +156,7 @@ class PoseEstimator:
             comparison = {
                 'translation_delta_m': delta_trans_m,
                 'rotation_delta_deg': rot_error_deg,
-                'agreement_status': 'High Alignment' if delta_trans_m < 0.08 else 'Acceptable Agreement',
+                'agreement_status': 'High Alignment' if (delta_trans_m < 0.08 and rot_error_deg < 15.0) else ('Acceptable Agreement' if delta_trans_m < 0.20 else 'Poor Agreement'),
                 'summary': f"Track A & Track B translation difference is {delta_trans_m*100:.1f}cm with {rot_error_deg}° angular delta."
             }
 
