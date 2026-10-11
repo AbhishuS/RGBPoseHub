@@ -99,6 +99,12 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
       });
       if (res.data.requires_2fa) {
         setPendingUserId(res.data.user_id);
+        if (res.data.qr_code || res.data.two_factor_secret) {
+          setTwoFAData({
+            qr_code: res.data.qr_code,
+            secret: res.data.two_factor_secret,
+          });
+        }
         setMode('2fa-login');
         setOtpCode(['', '', '', '', '', '']);
       } else {
@@ -163,8 +169,8 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
     <div className="login-page">
       <div className="login-container fade-in">
         <div className="login-card">
-          <h1 className="brand-title">RGB-Pose Hub</h1>
-          <p className="brand-subtitle">6D Object Pose Estimation Platform</p>
+          <h1 className="brand-title">{isAdmin ? 'Administrator Sign In' : 'RGB-Pose Hub'}</h1>
+          <p className="brand-subtitle">{isAdmin ? `Administrator access · ${ADMIN_EMAIL}` : '6D Object Pose Estimation Platform'}</p>
           {error && <div className="alert alert-error">{error}</div>}
           {notice && <div className="alert alert-success">{notice}</div>}
 
@@ -172,8 +178,9 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
           {mode === 'login' && (
             <form onSubmit={handleLogin}>
               <div className="form-group">
-                <label className="form-label">Email or Username</label>
-                <input className="form-input" type="text" name="email" placeholder="Enter email or username"
+                <label className="form-label">{isAdmin ? 'Administrator email' : 'Email or Username'}</label>
+                <input className="form-input" type={isAdmin ? 'email' : 'text'} name="email"
+                  placeholder={isAdmin ? ADMIN_EMAIL : 'Enter email or username'}
                   value={formData.email} onChange={handleChange} required />
               </div>
               <div className="form-group">
@@ -184,12 +191,22 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
               <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={loading}>
                 {loading ? <span className="spinner" /> : 'Sign In'}
               </button>
-              <p style={{ textAlign: 'center', marginTop: '0.75rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                <a href="#" onClick={(e) => { e.preventDefault(); setNotice(''); setError(''); setMode('reset-password'); }}>Forgot password?</a>
-              </p>
-              <p style={{ textAlign: 'center', marginTop: '1.25rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                Don't have an account?{' '}
-                <a href="#" onClick={(e) => { e.preventDefault(); setMode('register'); setError(''); }}>Create one</a>
+              {!isAdmin && (
+                <p style={{ textAlign: 'center', marginTop: '0.75rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  <a href="#" onClick={(e) => { e.preventDefault(); setNotice(''); setError(''); setMode('reset-password'); }}>Forgot password?</a>
+                </p>
+              )}
+              {!isAdmin && (
+                <p style={{ textAlign: 'center', marginTop: '1rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  Don't have an account?{' '}
+                  <a href="#" onClick={(e) => { e.preventDefault(); setMode('register'); setError(''); }}>Create one</a>
+                </p>
+              )}
+              <p className="login-account-switch" style={{ textAlign: 'center', marginTop: '1rem', fontSize: '0.85rem' }}>
+                {isAdmin ? 'Not the administrator?' : 'Administrator?'}{' '}
+                <a href={isAdmin ? '/login' : '/admin/login'} onClick={(e) => { e.preventDefault(); navigate(isAdmin ? '/login' : '/admin/login'); }}>
+                  {isAdmin ? 'User sign in' : 'Open admin sign in'}
+                </a>
               </p>
             </form>
           )}
@@ -282,6 +299,18 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
                 Enter the 6-digit code from your authenticator app:
               </p>
+              {twoFAData && (
+                <div style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: '10px', padding: '0.75rem', marginBottom: '1rem' }}>
+                  {twoFAData.qr_code && (
+                    <div style={{ display: 'inline-block', padding: '0.5rem', background: '#fff', borderRadius: '8px', marginBottom: '0.5rem' }}>
+                      <img src={`data:image/png;base64,${twoFAData.qr_code}`} alt="2FA QR Code" style={{ width: '130px', height: '130px' }} />
+                    </div>
+                  )}
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
+                    Authenticator Key: <code style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>{twoFAData.secret}</code>
+                  </p>
+                </div>
+              )}
               <div className="otp-inputs">
                 {otpCode.map((digit, i) => (
                   <input key={i} id={`otp-${i}`} className="otp-input" type="text" maxLength={1}

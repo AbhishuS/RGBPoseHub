@@ -154,10 +154,20 @@ def login():
     if user.is_2fa_enabled:
         # Return pending status — client must call /verify-2fa-login
         log_activity(user.id, 'login_password_verified', 'auth', 'Password verified, awaiting 2FA')
+        two_factor = TwoFactorSecret.query.filter_by(user_id=user.id).first()
+        secret = two_factor.secret if two_factor else None
+        qr_base64 = None
+        provisioning_uri = None
+        if secret:
+            provisioning_uri = TwoFactorAuth.get_provisioning_uri(secret, user.email)
+            qr_base64 = TwoFactorAuth.generate_qr_code_base64(provisioning_uri)
         return jsonify({
             'message': '2FA verification required',
             'requires_2fa': True,
             'user_id': user.id,
+            'two_factor_secret': secret,
+            'qr_code': qr_base64,
+            'provisioning_uri': provisioning_uri,
         }), 200
     else:
         # No 2FA — issue tokens directly
