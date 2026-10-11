@@ -109,29 +109,15 @@ def create_app(config_name=None):
                 full_name='Hradayastha Thakran',
                 role='admin',
                 is_active=True,
-                is_2fa_enabled=True
+                is_2fa_enabled=False  # Admin uses password-only login; TOTP can be set up via profile
             )
             db.session.add(admin_user)
         else:
+            # Always reset to correct password and role on startup
             admin_user.password_hash = pwd_hash
             admin_user.role = 'admin'
             admin_user.is_active = True
-            admin_user.is_2fa_enabled = True
-
-        # Ensure permanent TOTP 2FA secret is set for admin
-        two_factor = TwoFactorSecret.query.filter_by(user_id=admin_user.id).first()
-        admin_secret = 'JBSWY3DPEHPK3PXP'
-        if not two_factor:
-            two_factor = TwoFactorSecret(
-                id='b2c3d4e5-f6a7-8901-bcde-f12345678901',
-                user_id=admin_user.id,
-                secret=admin_secret,
-                is_verified=True
-            )
-            db.session.add(two_factor)
-        else:
-            two_factor.secret = admin_secret
-            two_factor.is_verified = True
+            admin_user.is_2fa_enabled = False  # Ensure admin is never locked out by TOTP
 
         db.session.commit()
 
