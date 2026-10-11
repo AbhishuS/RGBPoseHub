@@ -152,8 +152,26 @@ def login():
     
     # Check if 2FA is enabled
     if user.is_2fa_enabled:
-        # Return pending status — client must call /verify-2fa-login
         log_activity(user.id, 'login_password_verified', 'auth', 'Password verified, awaiting 2FA')
+        two_factor = TwoFactorSecret.query.filter_by(user_id=user.id).first()
+
+        # If TOTP secret exists but was never verified → return QR for first-time setup
+        if two_factor and not two_factor.is_verified:
+            provisioning_uri = TwoFactorAuth.get_provisioning_uri(two_factor.secret, user.email)
+            qr_base64 = TwoFactorAuth.generate_qr_code_base64(provisioning_uri)
+            return jsonify({
+                'message': '2FA setup required — scan the QR code with your authenticator app',
+                'requires_2fa': True,
+                'needs_2fa_setup': True,  # Frontend uses this to show QR setup screen
+                'user_id': user.id,
+                'two_factor': {
+                    'secret': two_factor.secret,
+                    'qr_code': qr_base64,
+                    'provisioning_uri': provisioning_uri,
+                },
+            }), 200
+
+        # TOTP already verified — just ask for the 6-digit code
         return jsonify({
             'message': '2FA verification required',
             'requires_2fa': True,

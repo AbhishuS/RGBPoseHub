@@ -109,15 +109,29 @@ def create_app(config_name=None):
                 full_name='Hradayastha Thakran',
                 role='admin',
                 is_active=True,
-                is_2fa_enabled=False  # Admin uses password-only login; TOTP can be set up via profile
+                is_2fa_enabled=True  # Admin requires TOTP like all users
             )
             db.session.add(admin_user)
         else:
-            # Always reset to correct password and role on startup
+            # Always reset password and role on startup
             admin_user.password_hash = pwd_hash
             admin_user.role = 'admin'
             admin_user.is_active = True
-            admin_user.is_2fa_enabled = False  # Ensure admin is never locked out by TOTP
+            admin_user.is_2fa_enabled = True  # Ensure TOTP is always required
+
+        # Seed a TOTP secret for admin if none exists (is_verified=False → triggers QR setup screen on first login)
+        two_factor = TwoFactorSecret.query.filter_by(user_id=admin_user.id).first()
+        if not two_factor:
+            from module_auth.two_factor import TwoFactorAuth as _TFA
+            admin_secret = _TFA.generate_secret()
+            two_factor = TwoFactorSecret(
+                id=str(__import__('uuid').uuid4()),
+                user_id=admin_user.id,
+                secret=admin_secret,
+                is_verified=False  # Will show QR on first login for setup
+            )
+            db.session.add(two_factor)
+        # If already verified, leave it alone — admin has already scanned the QR
 
         db.session.commit()
 

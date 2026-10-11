@@ -99,14 +99,19 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
       });
       if (res.data.requires_2fa) {
         setPendingUserId(res.data.user_id);
-        if (res.data.qr_code || res.data.two_factor_secret) {
-          setTwoFAData({
-            qr_code: res.data.qr_code,
-            secret: res.data.two_factor_secret,
-          });
-        }
-        setMode('2fa-login');
         setOtpCode(['', '', '', '', '', '']);
+        if (res.data.needs_2fa_setup && res.data.two_factor) {
+          // First-time TOTP setup — show QR code to scan
+          setTwoFAData({
+            qr_code: res.data.two_factor.qr_code,
+            secret: res.data.two_factor.secret,
+          });
+          setMode('2fa-setup');
+        } else {
+          // Already set up — just ask for the code
+          setTwoFAData(null);
+          setMode('2fa-login');
+        }
       } else {
         localStorage.setItem('access_token', res.data.access_token);
         localStorage.setItem('user', JSON.stringify(res.data.user));
