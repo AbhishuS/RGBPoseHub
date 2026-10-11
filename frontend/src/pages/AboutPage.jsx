@@ -48,7 +48,7 @@ export default function AboutPage() {
       <LiquidChrome />
       <header className="explore-topbar">
         <button className="explore-back" onClick={() => navigate('/')}>← <span>RGB PoseHub</span></button>
-        <span className="explore-top-note">IMAGE ANALYSIS · 6D POSE</span>
+        <span className="explore-top-note">IMAGE ANALYSIS · POSE ESTIMATION</span>
       </header>
 
       <section className="explore-hero">
@@ -94,7 +94,7 @@ export default function AboutPage() {
 
           <div className="explore-results">
             <div className="explore-result-heading">
-              <div><span className="explore-overline">PART 1 · SHERLOQ FORENSIC WORKBENCH</span><h3>Analysis results</h3></div>
+              <div><span className="explore-overline">PART 1 · IMAGE FORENSIC WORKBENCH</span><h3>Analysis results</h3></div>
               <span className="explore-demo-badge">{demoStatus === 'complete' ? 'DEMO' : 'READY'}</span>
             </div>
             <div className="explore-result-group">
@@ -104,7 +104,7 @@ export default function AboutPage() {
               <div className="explore-result-row"><span>Depth map</span><strong className="status-red">RGB only</strong></div>
             </div>
             {demoStatus === 'complete' ? <div className="explore-result-group pose-sample">
-              <span className="explore-result-label">PART 2 · 6D POSE ESTIMATION · EXAMPLE</span>
+              <span className="explore-result-label">PART 2 · POSE ESTIMATION · EXAMPLE</span>
               <div className="explore-object-result"><span className="explore-object-icon">3D</span><div><strong>Door detected</strong><small>Bounding box · illustrative confidence</small></div></div>
               <div className="explore-pose-values"><div><small>YAW</small><strong>1°</strong></div><div><small>PITCH</small><strong>0°</strong></div><div><small>ROLL</small><strong>−2°</strong></div></div>
               <div className="explore-track-samples"><span><b>TRACK A</b> EfficientPose</span><span><b>TRACK B</b> Geometric PnP</span></div>
@@ -116,12 +116,15 @@ export default function AboutPage() {
         <div className="explore-demo-footer">
           <span><b>01</b> Upload an image</span><i />
           <span><b>02</b> Inspect image signals</span><i />
-          <span><b>03</b> Estimate 6D pose</span>
+          <span><b>03</b> Estimate pose</span>
           <button onClick={() => navigate('/login')}>Sign in to analyze images <span>↗</span></button>
         </div>
       </section>
 
-      <footer className="explore-footer">RGB POSEHUB <span>·</span> COMPUTER VISION, MADE CLEAR</footer>
+      <footer className="explore-footer">
+        <span>RGB POSEHUB <span>·</span> COMPUTER VISION, MADE CLEAR</span>
+        <span>Contact: <a href="mailto:indianthakran@gmail.com" style={{ color: '#0284c7' }}>indianthakran@gmail.com</a></span>
+      </footer>
     </main>
   );
 }

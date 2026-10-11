@@ -170,7 +170,7 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
       <div className="login-container fade-in">
         <div className="login-card">
           <h1 className="brand-title">{isAdmin ? 'Administrator Sign In' : 'RGB-Pose Hub'}</h1>
-          <p className="brand-subtitle">{isAdmin ? `Administrator access · ${ADMIN_EMAIL}` : '6D Object Pose Estimation Platform'}</p>
+          <p className="brand-subtitle">{isAdmin ? `Administrator access · ${ADMIN_EMAIL}` : 'Object Pose Estimation Platform'}</p>
           {error && <div className="alert alert-error">{error}</div>}
           {notice && <div className="alert alert-success">{notice}</div>}
 

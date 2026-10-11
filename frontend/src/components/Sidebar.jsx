@@ -70,7 +70,7 @@ export default function Sidebar({ user, isAdmin = false, isOpen, onClose }) {
             <h1>RGB-Pose Hub</h1>
           </div>
         </div>
-        <p>6D Object Pose Estimation</p>
+        <p>Object Pose Estimation</p>
       </div>
 
       {/* Navigation */}

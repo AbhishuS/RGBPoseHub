@@ -101,16 +101,20 @@ export default function App() {
               </Routes>
             </div>
             
-            {/* Small Dashboard Footer */}
             <footer style={{
-              padding: '1.5rem',
+              padding: '1rem 1.5rem',
               textAlign: 'center',
               borderTop: '1px solid rgba(0,0,0,0.05)',
               marginTop: 'auto',
               color: '#666',
-              fontSize: '0.8rem'
+              fontSize: '0.8rem',
+              display: 'flex',
+              justifyContent: 'center',
+              gap: '1.5rem',
+              flexWrap: 'wrap',
             }}>
-              <p style={{ margin: 0 }}>&copy; {new Date().getFullYear()} RGB PoseHub</p>
+              <span>&copy; {new Date().getFullYear()} RGB PoseHub</span>
+              <span>Contact: <a href="mailto:indianthakran@gmail.com" style={{ color: '#0284c7', textDecoration: 'none' }}>indianthakran@gmail.com</a></span>
             </footer>
           </main>
         </div>

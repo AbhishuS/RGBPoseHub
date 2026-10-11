@@ -21,7 +21,7 @@ export default function LandingPage() {
           <span>RGB <b>POSEHUB</b></span>
         </a>
         <div className="landing-account-links">
-          <span className="landing-top-note">6D OBJECT POSE ESTIMATION</span>
+          <span className="landing-top-note">OBJECT POSE ESTIMATION</span>
           <button className="landing-admin-link" onClick={() => navigate('/admin/login')}>Admin sign in <span>↗</span></button>
         </div>
       </header>
@@ -38,7 +38,7 @@ export default function LandingPage() {
 
         <p className="landing-description">
           Turn a single image into a deeper understanding of an object’s position and orientation.
-          <br className="landing-desktop-break" /> Meet your all-in-one 6D pose estimation workspace.
+          <br className="landing-desktop-break" /> Meet your all-in-one pose estimation workspace.
         </p>
 
         <div className="landing-actions">
