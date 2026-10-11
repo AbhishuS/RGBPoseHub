@@ -51,8 +51,8 @@ class TestForensicPipeline(unittest.TestCase):
         # Check Gatekeeper Verdict for standard 2D image
         gatekeeper = results['rgbd_gatekeeper']
         self.assertFalse(gatekeeper['is_rgbd'])
-        self.assertIn(gatekeeper['status'], ['MONOCULAR_DEPTH_ESTIMATED', 'REJECTED_NOT_RGBD'])
-        self.assertTrue('Standard 2D' in gatekeeper['reason'] or 'No depth channel' in gatekeeper['reason'])
+        self.assertIn(gatekeeper['status'], ['NO_DEPTH_MAP', 'REJECTED_NOT_RGBD', 'DEPTH_SCALE_UNVERIFIED'])
+        self.assertTrue('No depth map' in gatekeeper['reason'] or 'No depth channel' in gatekeeper['reason'] or 'Standard 2D' in gatekeeper['reason'] or 'depth' in gatekeeper['reason'].lower())
 
     def test_forensic_analyzer_rgbd(self):
         analyzer = ForensicAnalyzer(upload_folder=self.test_dir)

@@ -124,9 +124,10 @@ class ForensicAnalyzer:
         except Exception as e:
             rgbd_gatekeeper = {
                 'is_rgbd': False,
-                'status': 'MONOCULAR_DEPTH_ESTIMATED',
-                'reason': 'Standard 2D photo analyzed. Synthesized depth preview generated.',
-                'source': 'Monocular Depth Approximation',
+                'is_monocular': False,
+                'status': 'NO_DEPTH_MAP',
+                'reason': 'No depth map provided. Upload a depth map to enable pose estimation.',
+                'source': 'None',
                 'has_depth_preview': False,
                 'depth_stats': None,
                 'depth_heatmap': None,
@@ -887,38 +888,14 @@ class ForensicAnalyzer:
                 status_reason = f"Depth channel from {unverified_depth_source} detected and rendered for preview."
                 source_label = unverified_depth_source or 'Embedded channel'
             else:
-                # Synthesize realistic monocular depth approximation from image geometry (0.8m - 2.5m)
-                try:
-                    w, h = img.size
-                    y_grid = np.linspace(0, 1, h, dtype=np.float32)[:, None]
-                    mono_depth = np.broadcast_to(1.8 - y_grid * 0.9, (h, w)).copy()
-                    # Modulate slightly with luminance for fine surface geometry
-                    gray_arr = np.array(img.convert('L'), dtype=np.float32) / 255.0
-                    mono_depth = np.clip(mono_depth + (gray_arr - 0.5) * 0.25, 0.4, 3.0)
-                    
-                    min_d = float(np.min(mono_depth))
-                    max_d = float(np.max(mono_depth))
-                    mean_d = float(np.mean(mono_depth))
-                    preview_heatmap = self._render_depth_heatmap(mono_depth, mono_depth > 0, min_d, max_d)
-                    stats = {
-                        'coverage_pct': 100.0,
-                        'min_depth': round(min_d, 3),
-                        'max_depth': round(max_d, 3),
-                        'mean_depth': round(mean_d, 3),
-                        'units': 'm (estimated)',
-                        'total_valid_pixels': int(mono_depth.size),
-                    }
-                except Exception:
-                    stats = None
-                    preview_heatmap = None
-
-                status_code = 'MONOCULAR_DEPTH_ESTIMATED'
-                status_reason = 'Standard 2D photo analyzed. Synthesized monocular depth generated for spatial inspection and pose estimation.'
-                source_label = 'Monocular Depth Approximation (0.8m – 2.5m)'
+                # No depth map provided at all — do NOT synthesize/assume depth
+                status_code = 'NO_DEPTH_MAP'
+                status_reason = 'No depth map provided. Upload a uint16 PNG/TIFF depth map alongside the RGB image to enable 6D pose estimation.'
+                source_label = 'None'
 
             return {
                 'is_rgbd': False,
-                'is_monocular': True,
+                'is_monocular': False,
                 'status': status_code,
                 'reason': status_reason,
                 'source': source_label,

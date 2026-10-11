@@ -585,6 +585,18 @@ export default function AnalysisPage() {
                           <img src={preview} alt="Selected" style={{ maxHeight: '140px', borderRadius: '10px', marginBottom: '0.5rem', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
                         )}
                         <p style={{ fontSize: '0.85rem', color: '#059669', fontWeight: 600, margin: 0 }}>✓ {selectedFile?.name}</p>
+                        <button
+                          className="btn btn-sm"
+                          style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#dc2626', background: 'rgba(220, 38, 38, 0.08)', border: '1px solid rgba(220, 38, 38, 0.2)' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedFile(null);
+                            setPreview(null);
+                            if (fileInputRef.current) fileInputRef.current.value = '';
+                          }}
+                        >
+                          ✕ Remove
+                        </button>
                       </div>
                     ) : (
                       <>
@@ -766,66 +778,74 @@ export default function AnalysisPage() {
                 </div>
 
                 {/* Gatekeeper Banner */}
-                <div
-                  style={{
-                    padding: '1.25rem',
-                    borderRadius: '12px',
-                    marginBottom: '1.5rem',
-                    background: gatekeeper?.is_rgbd
-                      ? 'rgba(16, 185, 129, 0.12)'
-                      : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED')
-                      ? 'rgba(37, 99, 235, 0.08)'
-                      : 'rgba(239, 68, 68, 0.12)',
-                    border: `1.5px solid ${
-                      gatekeeper?.is_rgbd
-                        ? '#10b981'
-                        : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED')
-                        ? '#3b82f6'
-                        : '#ef4444'
-                    }`,
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.4rem' }}>
-                        <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: gatekeeper?.is_rgbd ? '#10b981' : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED') ? '#2563eb' : '#ef4444' }}>
-                          {gatekeeper?.is_rgbd
-                            ? '✅ VERIFIED RGB-D SENSOR IMAGE'
-                            : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED')
-                            ? '📸 2D PHOTO (MONOCULAR DEPTH ESTIMATED)'
-                            : '❌ NO DEPTH MAP'}
-                        </span>
-                        <span className="badge" style={{
-                          background: gatekeeper?.is_rgbd ? '#10b98122' : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED') ? '#3b82f622' : '#ef444422',
-                          color: gatekeeper?.is_rgbd ? '#10b981' : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED') ? '#2563eb' : '#ef4444'
-                        }}>
-                          {gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED' ? 'MONOCULAR ESTIMATE' : (gatekeeper?.status || 'READY')}
-                        </span>
-                      </div>
-                      <p style={{ margin: 0, fontSize: '0.92rem', color: 'var(--text-secondary)' }}>
-                        {gatekeeper?.reason}
-                      </p>
-                      {gatekeeper?.depth_stats && (
-                        <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem', fontSize: '0.85rem' }}>
-                          <span><strong>Coverage:</strong> {gatekeeper.depth_stats.coverage_pct}%</span>
-                          <span><strong>Depth Range:</strong> {gatekeeper.depth_stats.min_depth}m – {gatekeeper.depth_stats.max_depth}m</span>
-                          <span><strong>Mean Depth:</strong> {gatekeeper.depth_stats.mean_depth}m</span>
+                {(() => {
+                  const hasDepthMap = Boolean(gatekeeper?.is_rgbd || currentDepthFilename || selectedDepthFile);
+                  return (
+                    <div
+                      style={{
+                        padding: '1.25rem',
+                        borderRadius: '12px',
+                        marginBottom: '1.5rem',
+                        background: hasDepthMap
+                          ? 'rgba(16, 185, 129, 0.12)'
+                          : 'rgba(59, 130, 246, 0.08)',
+                        border: `1.5px solid ${hasDepthMap ? '#10b981' : 'rgba(59, 130, 246, 0.35)'}`,
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.4rem' }}>
+                            <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: hasDepthMap ? '#059669' : '#1d4ed8' }}>
+                              {hasDepthMap
+                                ? '✅ VERIFIED RGB-D SENSOR IMAGE'
+                                : 'ℹ️ 2D COLOR IMAGE (FORENSICS VERIFIED)'}
+                            </span>
+                            <span className="badge" style={{
+                              background: hasDepthMap ? '#10b98122' : 'rgba(59, 130, 246, 0.15)',
+                              color: hasDepthMap ? '#059669' : '#1d4ed8'
+                            }}>
+                              {hasDepthMap ? (gatekeeper?.status || 'RGB-D VERIFIED') : 'NO DEPTH MAP'}
+                            </span>
+                          </div>
+                          <p style={{ margin: 0, fontSize: '0.92rem', color: '#475569' }}>
+                            {hasDepthMap
+                              ? (gatekeeper?.reason || 'Valid depth map supplied for 6D spatial pose estimation.')
+                              : 'Forensic inspection completed successfully. Upload a depth map (PNG, TIFF, JPG) alongside the image to enable 6D pose estimation.'}
+                          </p>
+                          {hasDepthMap && gatekeeper?.depth_stats && (
+                            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem', fontSize: '0.85rem', color: '#334155' }}>
+                              <span><strong>Coverage:</strong> {gatekeeper.depth_stats.coverage_pct}%</span>
+                              <span><strong>Depth Range:</strong> {gatekeeper.depth_stats.min_depth}m – {gatekeeper.depth_stats.max_depth}m</span>
+                              <span><strong>Mean Depth:</strong> {gatekeeper.depth_stats.mean_depth}m</span>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
 
-                    <div>
-                      <button className="btn btn-primary" onClick={proceedToPoseEstimation} disabled={poseLoading} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <span>{poseLoading ? '⏳ Computing Pose...' : '🎯 Estimate Pose'}</span>
-                        {selectedObject && (
-                          <span style={{ fontSize: '0.78rem', background: 'rgba(255,255,255,0.2)', padding: '0.15rem 0.5rem', borderRadius: '6px' }}>
-                            {selectedObject.label}
-                          </span>
-                        )}
-                      </button>
+                        <div>
+                          {hasDepthMap ? (
+                            <button className="btn btn-primary" onClick={proceedToPoseEstimation} disabled={poseLoading} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <span>{poseLoading ? '⏳ Computing Pose...' : '🎯 Estimate Pose'}</span>
+                              {selectedObject && (
+                                <span style={{ fontSize: '0.78rem', background: 'rgba(255,255,255,0.2)', padding: '0.15rem 0.5rem', borderRadius: '6px' }}>
+                                  {selectedObject.label}
+                                </span>
+                              )}
+                            </button>
+                          ) : (
+                            <div style={{ textAlign: 'right' }}>
+                              <button className="btn btn-secondary" disabled style={{ opacity: 0.65, cursor: 'not-allowed', color: '#64748b' }}>
+                                🚫 Pose Estimation Blocked
+                              </button>
+                              <div style={{ fontSize: '0.75rem', color: '#dc2626', marginTop: '0.25rem', fontWeight: 600 }}>
+                                Requires Depth Map
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Forensic Category Navigation Bar */}
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', borderBottom: '1px solid var(--border)', marginBottom: '1.25rem', paddingBottom: '0.5rem' }}>
@@ -1354,7 +1374,7 @@ export default function AnalysisPage() {
                         </div>
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 700, color: '#f8fafc', letterSpacing: '-0.02em' }}>
+                            <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 700, color: '#0f2b48', letterSpacing: '-0.02em' }}>
                               Spatial Pose & Geometry Workbench
                             </h3>
                             <span style={{
@@ -1371,7 +1391,7 @@ export default function AnalysisPage() {
                               Dual-Track Verified
                             </span>
                           </div>
-                          <p style={{ margin: '0.2rem 0 0', fontSize: '0.85rem', color: '#94a3b8' }}>
+                          <p style={{ margin: '0.2rem 0 0', fontSize: '0.85rem', color: '#334155' }}>
                             Simultaneous Deep Learning Regression (Track A) & Geometric PnP Correspondence (Track B)
                           </p>
                         </div>
@@ -1472,8 +1492,8 @@ export default function AnalysisPage() {
                     {/* Object Switcher Toolbar */}
                     {candidateObjects.length > 0 && (
                       <div style={{
-                        background: 'rgba(15, 23, 42, 0.65)',
-                        border: '1px solid rgba(56, 189, 248, 0.25)',
+                        background: 'linear-gradient(135deg, rgba(23, 105, 210, 0.08), rgba(16, 185, 129, 0.06))',
+                        border: '1px solid rgba(23, 105, 210, 0.25)',
                         borderRadius: '12px',
                         padding: '0.85rem 1.25rem',
                         marginBottom: '1.25rem',
@@ -1486,10 +1506,10 @@ export default function AnalysisPage() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                           <span style={{ fontSize: '1.1rem' }}>🎯</span>
                           <div>
-                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f8fafc' }}>
-                              Analyzing Object: <strong style={{ color: '#38bdf8' }}>{poseResults.object_name}</strong>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#0f2b48' }}>
+                              Analyzing Object: <strong style={{ color: '#1767d2' }}>{poseResults.object_name}</strong>
                             </span>
-                            <span style={{ fontSize: '0.75rem', color: '#94a3b8', marginLeft: '0.6rem' }}>
+                            <span style={{ fontSize: '0.75rem', color: '#475569', marginLeft: '0.6rem' }}>
                               (Click any other object below to calculate pose for that specific object)
                             </span>
                           </div>
@@ -1560,10 +1580,10 @@ export default function AnalysisPage() {
                             {poseResults.comparison.agreement_status}
                           </div>
                           <div>
-                            <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#f1f5f9' }}>
+                            <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f2b48' }}>
                               Cross-Track Geometric Consistency
                             </div>
-                            <div style={{ fontSize: '0.82rem', color: '#94a3b8' }}>
+                            <div style={{ fontSize: '0.82rem', color: '#334155' }}>
                               {poseResults.comparison.summary}
                             </div>
                           </div>
@@ -1571,11 +1591,11 @@ export default function AnalysisPage() {
 
                         <div style={{ display: 'flex', gap: '1.5rem', fontFamily: 'var(--mono)', fontSize: '0.85rem' }}>
                           <div>
-                            <span style={{ color: '#94a3b8' }}>Translation Delta (ΔT): </span>
+                            <span style={{ color: '#475569' }}>Translation Delta (ΔT): </span>
                             <strong style={{ color: '#38bdf8' }}>{poseResults.comparison.translation_delta_m != null ? `${(poseResults.comparison.translation_delta_m * 100).toFixed(1)} cm` : 'N/A'}</strong>
                           </div>
                           <div>
-                            <span style={{ color: '#94a3b8' }}>Angular Delta (Δθ): </span>
+                            <span style={{ color: '#475569' }}>Angular Delta (Δθ): </span>
                             <strong style={{ color: '#a78bfa' }}>{poseResults.comparison.rotation_delta_deg != null ? `${poseResults.comparison.rotation_delta_deg}°` : 'N/A'}</strong>
                           </div>
                         </div>

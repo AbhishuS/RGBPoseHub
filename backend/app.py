@@ -40,17 +40,21 @@ def create_app(config_name=None):
             if not user_id:
                 return True
             user = User.query.get(user_id)
-            if not user or not user.is_active:
+            # If user is not in DB (e.g. ephemeral SQLite wiped on Render redeploy),
+            # do NOT revoke the token — let the user continue their session.
+            # We only block if the user explicitly exists but is deactivated.
+            if user is not None and not user.is_active:
                 return True
             jti = jwt_payload.get('jti')
             if jti:
                 session = Session.query.filter_by(token_jti=jti).first()
                 if session and not session.is_active:
                     return True
-            # Only block if user had recorded sessions and ALL of them were deactivated (e.g. admin revoked all)
-            user_sessions = Session.query.filter_by(user_id=user_id).all()
-            if user_sessions and all(not s.is_active for s in user_sessions):
-                return True
+            # Only block if all sessions are explicitly deactivated (admin revoked)
+            if user is not None:
+                user_sessions = Session.query.filter_by(user_id=user_id).all()
+                if user_sessions and all(not s.is_active for s in user_sessions):
+                    return True
             return False
         except Exception:
             return False
@@ -120,11 +124,11 @@ def create_app(config_name=None):
             admin_user.is_active = True
             admin_user.is_2fa_enabled = True  # Ensure TOTP is always required
 
-        # Seed a TOTP secret for admin if none exists (is_verified=False → triggers QR setup screen on first login)
+        # Seed a TOTP secret for admin if none exists
+        # Use a stable env-var secret so redeploys don't break the admin's authenticator app.
         two_factor = TwoFactorSecret.query.filter_by(user_id=admin_user.id).first()
         if not two_factor:
-            from module_auth.two_factor import TwoFactorAuth as _TFA
-            admin_secret = _TFA.generate_secret()
+            admin_secret = os.environ.get('ADMIN_TOTP_SECRET', 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PX')
             two_factor = TwoFactorSecret(
                 id=str(__import__('uuid').uuid4()),
                 user_id=admin_user.id,

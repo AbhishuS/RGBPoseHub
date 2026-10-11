@@ -542,17 +542,25 @@ def admin_delete_user(user_id):
     if target.role == 'admin':
         return jsonify({'error': 'Cannot delete admin account'}), 403
 
+    target_email = target.email  # capture before session expunges object
+    # Deactivate user and invalidate all sessions first
     target.is_active = False
     sessions = Session.query.filter_by(user_id=user_id).all()
     now = datetime.now(timezone.utc)
     for s in sessions:
         s.is_active = False
         s.revoked_at = now
-    
+    db.session.flush()  # write flags before cascade-deleting
+
+    # Delete child records explicitly to avoid FK constraint errors
+    from module_auth.models import TwoFactorSecret, ActivityLog as _AL
+    TwoFactorSecret.query.filter_by(user_id=user_id).delete(synchronize_session='fetch')
+    _AL.query.filter_by(user_id=user_id).delete(synchronize_session='fetch')
+    Session.query.filter_by(user_id=user_id).delete(synchronize_session='fetch')
     db.session.delete(target)
     db.session.commit()
-    log_activity(current_id, 'admin_delete_user', 'admin', f'Deleted user {target.email}')
-    return jsonify({'message': f'User {target.email} deleted and all sessions revoked.'}), 200
+    log_activity(current_id, 'admin_delete_user', 'admin', f'Deleted user {target_email}')
+    return jsonify({'message': f'User {target_email} deleted and all sessions revoked.'}), 200
 
 
 @auth_bp.route('/admin/users/<user_id>/revoke-sessions', methods=['POST'])
