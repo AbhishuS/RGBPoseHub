@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:5001/api';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -14,15 +14,16 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 errors
+// Handle 401 errors gracefully - never trap visitors on /login
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem('access_token');
       localStorage.removeItem('user');
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+      const publicPaths = ['/', '/landing', '/about', '/login', '/admin/login'];
+      if (!publicPaths.includes(window.location.pathname)) {
+        window.location.href = '/';
       }
     }
     return Promise.reject(err);
@@ -74,7 +75,6 @@ export const mlAPI = {
   forensicAnalyzeJson: (data) => api.post('/ml/forensic-analyze', data),
   estimatePose: (data) => api.post('/ml/estimate-pose', data),
   getPointCloud3D: (data) => api.post('/ml/point-cloud-3d', data),
-  detectObjects: (data) => api.post('/ml/detect-objects', data),
   getSampleRGBDImages: () => api.get('/ml/sample-rgbd-images'),
 };
 

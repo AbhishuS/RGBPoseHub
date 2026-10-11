@@ -23,7 +23,7 @@ except ImportError:
 ml_bp = Blueprint('ml', __name__)
 
 # Allowed upload extensions (lowercase)
-_ALLOWED_IMAGE_EXTS = {'jpg', 'jpeg', 'png', 'tiff', 'tif', 'bmp', 'webp', 'heic', 'heif', 'pdf'}
+_ALLOWED_IMAGE_EXTS = {'jpg', 'jpeg', 'png', 'tiff', 'tif', 'bmp', 'webp', 'gif', 'avif', 'heic', 'heif', 'pdf'}
 
 
 def _sanitize_for_json(val):
@@ -49,28 +49,61 @@ def _save_upload(file_storage, upload_dir, prefix=''):
     """
     os.makedirs(upload_dir, exist_ok=True)
     raw_name = file_storage.filename or 'upload'
-    ext = raw_name.rsplit('.', 1)[-1].lower() if '.' in raw_name else ''
+    user_ext = raw_name.rsplit('.', 1)[-1].lower() if '.' in raw_name else ''
 
-    if ext in ('jpg', 'jpeg'):
-        ext = 'jpg'
-    elif ext in ('png', 'pdf', 'heic', 'heif', 'tiff', 'tif', 'bmp', 'webp'):
-        pass
-    else:
-        # Only check fallback if extension was completely missing or unknown
+    try:
+        header = file_storage.stream.read(64)
+        file_storage.stream.seek(0)
+    except Exception:
         header = b''
+
+    actual_ext = None
+    if header.startswith(b'%PDF'):
+        actual_ext = 'pdf'
+    elif header.startswith(b'\x89PNG'):
+        actual_ext = 'png'
+    elif header.startswith(b'\xff\xd8\xff'):
+        actual_ext = 'jpg' if user_ext == 'jpg' else 'jpeg'
+    elif header.startswith((b'GIF87a', b'GIF89a')):
+        actual_ext = 'gif'
+    elif header.startswith(b'BM'):
+        actual_ext = 'bmp'
+    elif len(header) >= 12 and header[4:8] == b'ftyp':
+        brands = header[8:64].lower()
+        if b'avif' in brands or b'avis' in brands:
+            actual_ext = 'avif'
+        elif any(tag in brands for tag in (b'heic', b'heix', b'hevc', b'hevx', b'mif1', b'msf1')):
+            actual_ext = 'heic'
+
+    if actual_ext is None:
         try:
-            header = file_storage.stream.read(16)
+            from PIL import Image
             file_storage.stream.seek(0)
+            with Image.open(file_storage.stream) as image:
+                actual_ext = {'JPEG': 'jpg' if user_ext == 'jpg' else 'jpeg',
+                              'PNG': 'png', 'TIFF': 'tiff', 'WEBP': 'webp',
+                              'BMP': 'bmp', 'GIF': 'gif', 'HEIF': 'heic'}.get(image.format)
         except Exception:
-            pass
-        if header.startswith(b'%PDF'):
-            ext = 'pdf'
-        elif header.startswith(b'\x89PNG'):
-            ext = 'png'
-        elif header.startswith(b'\xff\xd8\xff'):
-            ext = 'jpg'
-        else:
-            ext = 'png'
+            actual_ext = None
+        finally:
+            try:
+                file_storage.stream.seek(0)
+            except Exception:
+                pass
+
+    # Never change user's image extension to heic if they uploaded a standard format
+    if user_ext in ('jpg', 'jpeg'):
+        ext = 'jpg' if user_ext == 'jpg' else 'jpeg'
+    elif user_ext == 'png':
+        ext = 'png'
+    elif user_ext in ('webp', 'bmp', 'gif', 'pdf', 'tiff', 'tif'):
+        ext = user_ext
+    elif actual_ext:
+        ext = actual_ext
+    elif user_ext in _ALLOWED_IMAGE_EXTS:
+        ext = user_ext
+    else:
+        ext = 'jpg'
 
     filename = f'{prefix}{_uuid.uuid4().hex}.{ext}'
     path = os.path.join(upload_dir, filename)
@@ -78,27 +111,31 @@ def _save_upload(file_storage, upload_dir, prefix=''):
     return path, ext
 
 
-def _get_image_preview_b64(image_path):
+def _get_image_preview_b64(image_path, original_filename=None):
     """
-    Returns (base64_str, mime_type, display_format) preserving original format
-    (JPG as JPEG, PNG as PNG, etc.). Converts HEIC/PDF to browser-renderable formats.
+    Return a browser-renderable preview and its MIME type.
+    Accurately identifies JPG, PNG, HEIC, PDF, etc.
     """
     import base64
     import io
-    ext = os.path.splitext(image_path)[-1].lower().lstrip('.')
-    if ext in ('jpg', 'jpeg'):
+
+    ref_name = original_filename or image_path
+    ext = os.path.splitext(ref_name)[-1].lower().lstrip('.')
+    disk_ext = os.path.splitext(image_path)[-1].lower().lstrip('.')
+
+    if ext in ('jpg', 'jpeg') or disk_ext in ('jpg', 'jpeg'):
         save_fmt = 'JPEG'
         mime = 'image/jpeg'
-        fmt_name = 'JPEG'
-    elif ext == 'png':
+        fmt_name = 'JPG' if (ext == 'jpg' or disk_ext == 'jpg') else 'JPEG'
+    elif ext == 'png' or disk_ext == 'png':
         save_fmt = 'PNG'
         mime = 'image/png'
         fmt_name = 'PNG'
-    elif ext in ('heic', 'heif'):
+    elif ext in ('heic', 'heif') or disk_ext in ('heic', 'heif'):
         save_fmt = 'JPEG'
         mime = 'image/jpeg'
         fmt_name = 'HEIC'
-    elif ext == 'pdf':
+    elif ext == 'pdf' or disk_ext == 'pdf':
         save_fmt = 'PNG'
         mime = 'image/png'
         fmt_name = 'PDF'
@@ -106,10 +143,18 @@ def _get_image_preview_b64(image_path):
         save_fmt = 'PNG'
         mime = 'image/png'
         fmt_name = ext.upper()
+    elif ext == 'gif':
+        save_fmt = 'PNG'
+        mime = 'image/png'
+        fmt_name = 'GIF'
+    elif ext == 'avif':
+        save_fmt = 'PNG'
+        mime = 'image/png'
+        fmt_name = 'AVIF'
     else:
         save_fmt = 'PNG'
         mime = 'image/png'
-        fmt_name = ext.upper() if ext else 'PNG'
+        fmt_name = ext.upper() if ext else 'RGB'
 
     try:
         from module_data.rgbd_utils import _pil_open_any
@@ -362,18 +407,22 @@ def forensic_analyze():
 
     image_path = None
     depth_path = None
+    depth_filename = None
     filename = None
+    original_filename = None
 
     # Handle image upload or filename parameter
     if 'image' in request.files:
         file = request.files['image']
         if file.filename != '':
+            original_filename = file.filename
             image_path, _ = _save_upload(file, upload_dir)
             filename = os.path.basename(image_path)
 
     if not image_path and request.is_json:
         data = request.get_json() or {}
         filename = data.get('filename')
+        original_filename = filename
         if filename:
             # Check upload folder or dataset folder
             upload_candidate = os.path.join(upload_dir, filename)
@@ -386,27 +435,21 @@ def forensic_analyze():
             elif os.path.exists(dataset_candidate):
                 image_path = dataset_candidate
 
+    # Sample and dataset RGB-D pairs use the documented <image>_depth.png name.
+    # Pass that companion to both the gatekeeper and pose candidate detector.
+    if image_path and not depth_path:
+        stem, _ = os.path.splitext(image_path)
+        for candidate in (f'{stem}_depth.png', f'{stem}_depth.tiff', f'{stem}_d.png'):
+            if os.path.isfile(candidate):
+                depth_path = candidate
+                depth_filename = os.path.basename(candidate)
+                break
+
     if 'depth_image' in request.files:
         depth_file = request.files['depth_image']
         if depth_file.filename != '':
             depth_path, _ = _save_upload(depth_file, upload_dir, prefix='depth_')
-
-    # Handle auto-depth generation if requested and no depth file provided
-    if not depth_path and request.form.get('auto_depth') == 'true' and image_path:
-        try:
-            from convert_depth_to_rgbd import create_rgbd_from_inputs
-            import uuid as uuid_mod
-            auto_rgbd_filename = f'auto_rgbd_{uuid_mod.uuid4().hex}.png'
-            auto_rgbd_path = os.path.join(upload_dir, auto_rgbd_filename)
-            result_path = create_rgbd_from_inputs(
-                image_path, depth_path=None, auto_depth=True, output_path=auto_rgbd_path
-            )
-            if result_path and os.path.exists(result_path):
-                # Use the auto-generated RGBD image instead
-                image_path = result_path
-                filename = auto_rgbd_filename
-        except Exception as e:
-            current_app.logger.warning(f'Auto-depth generation failed: {e}')
+            depth_filename = os.path.basename(depth_path)
 
     if not image_path or not os.path.exists(image_path):
         return jsonify({'error': 'Valid image required for forensic analysis'}), 400
@@ -414,7 +457,7 @@ def forensic_analyze():
     # Run Sherloq Forensic Inspection & RGB-D Verification
     analyzer = ForensicAnalyzer(upload_folder=upload_dir)
     try:
-        forensic_results = analyzer.analyze(image_path, depth_image_path=depth_path)
+        forensic_results = analyzer.analyze(image_path, depth_image_path=depth_path, original_filename=original_filename)
     except Exception as e:
         current_app.logger.error(f'Forensic analysis exception: {e}', exc_info=True)
         return jsonify({'error': f'Forensic analysis failed: {e}'}), 500
@@ -433,8 +476,8 @@ def forensic_analyze():
     except Exception as e:
         current_app.logger.warning(f'Candidate object detection error: {e}')
 
-    # Encode original image as base64 for browser preview (preserving format: JPG as JPEG, PNG as PNG, etc.)
-    original_b64, image_mime, image_format = _get_image_preview_b64(image_path)
+    # Encode original image as base64 for browser preview (preserving format: JPG as JPG/JPEG, PNG as PNG, etc.)
+    original_b64, image_mime, image_format = _get_image_preview_b64(image_path, original_filename=original_filename)
 
     log_activity(user_id, 'forensic_analysis', 'ml',
                  f'Ran Sherloq Forensics & RGB-D Inspection: {filename}',
@@ -451,6 +494,8 @@ def forensic_analyze():
         'image_mime': image_mime,
         'image_format': image_format,
         'filename': filename or os.path.basename(image_path),
+        'original_filename': original_filename or filename or os.path.basename(image_path),
+        'depth_filename': depth_filename,
     })), 200
 
 
@@ -523,6 +568,8 @@ def estimate_pose():
     camera_params = data.get('camera_params')
     target_point = data.get('target_point')
     bounding_box = data.get('bounding_box')
+    object_points_3d = data.get('object_points_3d')
+    image_points_2d = data.get('image_points_2d')
     selected_object_name = data.get('selected_object_name') or data.get('object_name')
 
     if not filename:
@@ -560,17 +607,29 @@ def estimate_pose():
         model_dir=current_app.config['MODEL_FOLDER'],
         dataset_dir=current_app.config['DATASET_FOLDER'],
     )
-    pose_result = estimator.estimate_pose(
-        image_path,
-        depth_path=depth_path,
-        depth_stats=depth_stats,
-        prediction_info=prediction_info,
-        track=track,
-        camera_params=camera_params,
-        target_point=target_point,
-        bounding_box=bounding_box,
-        selected_object_name=selected_object_name
-    )
+    try:
+        pose_result = estimator.estimate_pose(
+            image_path,
+            depth_path=depth_path,
+            depth_stats=depth_stats,
+            prediction_info=prediction_info,
+            track=track,
+            camera_params=camera_params,
+            target_point=target_point,
+            bounding_box=bounding_box,
+            selected_object_name=selected_object_name,
+            object_points_3d=object_points_3d,
+            image_points_2d=image_points_2d
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc), 'pose_result': None}), 400
+
+    if pose_result.get('status') == 'unavailable':
+        return jsonify({
+            'error': pose_result.get('error', 'Pose estimation is unavailable.'),
+            'pose_result': _sanitize_for_json(pose_result),
+            'filename': filename,
+        }), 422
 
     log_activity(user_id, 'pose_estimation', 'ml',
                  f'Ran 6D Pose Estimation ({track}) on RGB-D image: {filename} for object: {pose_result.get("object_name")}',
@@ -656,7 +715,7 @@ def get_sample_rgbd_images():
             samples.append({
                 'filename': fname,
                 'name': fname.replace('sample_rgbd_', '').replace('.png', '').replace('_', ' ').title(),
-                'type': '4-Channel RGB-D',
+                'type': 'RGB + uint16 depth',
             })
 
     return jsonify({'samples': samples}), 200

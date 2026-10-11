@@ -1,16 +1,20 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../services/api';
+import { ADMIN_EMAIL } from '../utils/auth';
 
-export default function LoginPage({ onLogin }) {
+export default function LoginPage({ onLogin, isAdmin = false }) {
   const navigate = useNavigate();
-  const [mode, setMode] = useState('login'); // login | register | 2fa-setup | 2fa-login
+  const [mode, setMode] = useState('login'); // login | register | reset-password | 2fa-setup | 2fa-login
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [formData, setFormData] = useState({ email: '', username: '', password: '', full_name: '' });
   const [twoFAData, setTwoFAData] = useState(null);
   const [otpCode, setOtpCode] = useState(['', '', '', '', '', '']);
   const [pendingUserId, setPendingUserId] = useState(null);
+  const [resetOtp, setResetOtp] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [notice, setNotice] = useState('');
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -36,10 +40,36 @@ export default function LoginPage({ onLogin }) {
 
   const getOtpString = () => otpCode.join('');
 
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const res = await authAPI.resetPassword({ email: formData.email, otp_code: resetOtp, password: newPassword });
+      setNotice(res.data.message);
+      setFormData({ ...formData, password: '' });
+      setResetOtp('');
+      setNewPassword('');
+      setMode('login');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not reset password. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleRegister = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    
+    const pwd = formData.password;
+    if (pwd.length < 8 || !/[A-Z]/.test(pwd) || !/[a-z]/.test(pwd) || !/\d/.test(pwd) || !/[@$!%*?&#^~]/.test(pwd)) {
+      setError('Password must be at least 8 characters, with uppercase, lowercase, number, and special character.');
+      setLoading(false);
+      return;
+    }
+
     try {
       const res = await authAPI.register(formData);
       setTwoFAData(res.data.two_factor);
@@ -62,7 +92,11 @@ export default function LoginPage({ onLogin }) {
     setLoading(true);
     setError('');
     try {
-      const res = await authAPI.login({ email: formData.email, password: formData.password });
+      const res = await authAPI.login({
+        email: formData.email,
+        password: formData.password,
+        account_type: isAdmin ? 'admin' : 'user',
+      });
       if (res.data.requires_2fa) {
         setPendingUserId(res.data.user_id);
         setMode('2fa-login');
@@ -109,7 +143,11 @@ export default function LoginPage({ onLogin }) {
     setLoading(true);
     setError('');
     try {
-      const res = await authAPI.verify2FALogin({ user_id: pendingUserId, otp_code: code });
+      const res = await authAPI.verify2FALogin({
+        user_id: pendingUserId,
+        otp_code: code,
+        account_type: isAdmin ? 'admin' : 'user',
+      });
       localStorage.setItem('access_token', res.data.access_token);
       localStorage.setItem('user', JSON.stringify(res.data.user));
       onLogin(res.data.user);
@@ -125,17 +163,17 @@ export default function LoginPage({ onLogin }) {
     <div className="login-page">
       <div className="login-container fade-in">
         <div className="login-card">
-          <h1 className="brand-title">RGB-Pose Hub</h1>
-          <p className="brand-subtitle">6D Object Pose Estimation Platform</p>
-
-          {error && <div className="alert alert-error">⚠ {error}</div>}
+          <h1 className="brand-title">{isAdmin ? 'Administrator Sign In' : 'RGB-Pose Hub'}</h1>
+          <p className="brand-subtitle">{isAdmin ? `Administrator access · ${ADMIN_EMAIL}` : '6D Object Pose Estimation Platform'}</p>
+          {error && <div className="alert alert-error">{error}</div>}
+          {notice && <div className="alert alert-success">{notice}</div>}
 
           {/* ── Login Form ── */}
           {mode === 'login' && (
             <form onSubmit={handleLogin}>
               <div className="form-group">
-                <label className="form-label">Email or Username</label>
-                <input className="form-input" type="text" name="email" placeholder="Enter email or username"
+                <label className="form-label">{isAdmin ? 'Administrator email' : 'Email or Username'}</label>
+                <input className="form-input" type={isAdmin ? 'email' : 'text'} name="email" placeholder={isAdmin ? ADMIN_EMAIL : 'Enter email or username'}
                   value={formData.email} onChange={handleChange} required />
               </div>
               <div className="form-group">
@@ -144,17 +182,51 @@ export default function LoginPage({ onLogin }) {
                   value={formData.password} onChange={handleChange} required />
               </div>
               <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={loading}>
-                {loading ? <span className="spinner" /> : '🔐 Sign In'}
+                {loading ? <span className="spinner" /> : 'Sign In'}
               </button>
-              <p style={{ textAlign: 'center', marginTop: '1.25rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+              {!isAdmin && <p style={{ textAlign: 'center', marginTop: '0.75rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                <a href="#" onClick={(e) => { e.preventDefault(); setNotice(''); setError(''); setMode('reset-password'); }}>Forgot password?</a>
+              </p>}
+              {!isAdmin && <p style={{ textAlign: 'center', marginTop: '1.25rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                 Don't have an account?{' '}
                 <a href="#" onClick={(e) => { e.preventDefault(); setMode('register'); setError(''); }}>Create one</a>
-              </p>
+              </p>}
+            </form>
+          )}
+
+          {mode === 'reset-password' && !isAdmin && (
+            <form onSubmit={handleResetPassword}>
+              <h3 style={{ marginBottom: '0.75rem', fontSize: '1.1rem' }}>Choose a new password</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>Verify your account with the 6-digit code from its authenticator app.</p>
+              <div className="form-group">
+                <label className="form-label">Email</label>
+                <input className="form-input" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Authenticator code</label>
+                <input className="form-input" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={resetOtp} onChange={(e) => setResetOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">New password</label>
+                <input className="form-input" type="password" minLength={8} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required />
+              </div>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '1rem' }}>At least 8 characters, including uppercase, lowercase, number, and special character.</p>
+              <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={loading}>{loading ? <span className="spinner" /> : 'Set new password'}</button>
+              <p style={{ textAlign: 'center', marginTop: '1rem' }}><a href="#" onClick={(e) => { e.preventDefault(); setError(''); setNotice(''); setMode('login'); }}>Back to sign in</a></p>
             </form>
           )}
 
           {/* ── Register Form ── */}
-          {mode === 'register' && (
+          {mode === 'login' && (
+            <p className="login-account-switch">
+              {isAdmin ? 'Not the administrator?' : 'Administrator?'}{' '}
+              <a href={isAdmin ? '/login' : '/admin/login'}>
+                {isAdmin ? 'User sign in' : 'Open admin sign in'}
+              </a>
+            </p>
+          )}
+
+          {mode === 'register' && !isAdmin && (
             <form onSubmit={handleRegister}>
               <div className="form-group">
                 <label className="form-label">Full Name</label>
@@ -177,7 +249,7 @@ export default function LoginPage({ onLogin }) {
                   value={formData.password} onChange={handleChange} required minLength={8} />
               </div>
               <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={loading}>
-                {loading ? <span className="spinner" /> : '🚀 Create Account'}
+                {loading ? <span className="spinner" /> : 'Create Account'}
               </button>
               <p style={{ textAlign: 'center', marginTop: '1.25rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                 Already have an account?{' '}
@@ -189,7 +261,7 @@ export default function LoginPage({ onLogin }) {
           {/* ── 2FA Setup ── */}
           {mode === '2fa-setup' && twoFAData && (
             <div style={{ textAlign: 'center' }}>
-              <h3 style={{ marginBottom: '0.75rem', fontSize: '1.1rem' }}>📱 Set Up Two-Factor Authentication</h3>
+              <h3 style={{ marginBottom: '0.75rem', fontSize: '1.1rem' }}>Set Up Two-Factor Authentication</h3>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>
                 Scan this QR code with Google Authenticator, Authy, or any TOTP app:
               </p>
@@ -208,7 +280,7 @@ export default function LoginPage({ onLogin }) {
                 ))}
               </div>
               <button className="btn btn-primary btn-block" onClick={handleVerify2FASetup} disabled={loading}>
-                {loading ? <span className="spinner" /> : '✅ Verify & Complete Setup'}
+                {loading ? <span className="spinner" /> : 'Verify & Complete Setup'}
               </button>
             </div>
           )}
@@ -216,7 +288,7 @@ export default function LoginPage({ onLogin }) {
           {/* ── 2FA Login Verification ── */}
           {mode === '2fa-login' && (
             <div style={{ textAlign: 'center' }}>
-              <h3 style={{ marginBottom: '0.75rem', fontSize: '1.1rem' }}>🔐 Two-Factor Verification</h3>
+              <h3 style={{ marginBottom: '0.75rem', fontSize: '1.1rem' }}>Two-Factor Verification</h3>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
                 Enter the 6-digit code from your authenticator app:
               </p>
@@ -228,7 +300,7 @@ export default function LoginPage({ onLogin }) {
                 ))}
               </div>
               <button className="btn btn-primary btn-block" onClick={handleVerify2FALogin} disabled={loading}>
-                {loading ? <span className="spinner" /> : '🔓 Verify & Sign In'}
+                {loading ? <span className="spinner" /> : 'Verify & Sign In'}
               </button>
               <p style={{ marginTop: '1rem' }}>
                 <a href="#" onClick={(e) => { e.preventDefault(); setMode('login'); setOtpCode(['','','','','','']); setError(''); }}

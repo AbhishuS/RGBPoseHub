@@ -220,8 +220,8 @@ def load_rgbd(rgb_or_rgba_path, depth_path=None):
 
     1. A HEIC file with embedded Apple Portrait depth → extracted automatically.
     2. A pair of (RGB/HEIC image, separate depth map image).
-    3. A single 4-channel RGBA image (Alpha encodes depth).
-    4. A plain RGB image (depth synthesised heuristically).
+    3. A single 4-channel RGBA image (rejected unless an explicit depth scale
+       is added by the caller).
 
     Supports: .jpg, .png, .tiff, .heic, .heif and any other PIL-readable format.
 
@@ -243,7 +243,15 @@ def load_rgbd(rgb_or_rgba_path, depth_path=None):
     depth_raw  = None        # raw integer array (uint8 or uint16)
     depth_format = None
 
-    # 2a: Explicit separate depth file supplied (user provided depth map)
+    # 2a: Discover companion depth file if depth_path not supplied
+    if not depth_path or not os.path.exists(depth_path):
+        stem, _ = os.path.splitext(rgb_or_rgba_path)
+        for cand in (f"{stem}_depth.png", f"{stem}_depth.tiff", f"{stem}_d.png"):
+            if os.path.exists(cand):
+                depth_path = cand
+                break
+
+    # 2b: Explicit or discovered separate depth file
     if depth_path and os.path.exists(depth_path):
         if is_heic_file(depth_path):
             # A HEIC depth file (e.g. exported from Lightroom)
@@ -256,9 +264,9 @@ def load_rgbd(rgb_or_rgba_path, depth_path=None):
                 depth_raw = np.array(_pil_open_any(depth_path))
             if depth_raw is not None and depth_raw.ndim == 3:
                 depth_raw = depth_raw[:, :, 0]
-        depth_format = f"User Depth File ({os.path.basename(depth_path)})"
+        depth_format = f"Depth File ({os.path.basename(depth_path)})"
 
-    # ── Step 3: convert raw depth array → metric float32 ──────────────────
+    # ── Step 3: convert depth array → metric float32 ─────────────────────
     rgb = np.array(img_pil.convert('RGB'), dtype=np.uint8)
     h, w = rgb.shape[:2]
 
@@ -275,41 +283,46 @@ def load_rgbd(rgb_or_rgba_path, depth_path=None):
             # 16-bit sensor depth in mm → metres
             depth_m = depth_raw.astype(np.float32) / 1000.0
             depth_format = depth_format or "16-bit raw sensor (mm → m)"
-
         else:
-            # 8-bit: could be disparity (white = close) or direct (black = close)
-            depth_norm = depth_raw.astype(np.float32) / 255.0
+            # 8-bit depth map (JPEG, PNG, TIFF):
+            # In monocular depth models & smartphone depth (Depth Anything, MiDaS, Apple Portrait),
+            # 8-bit depth maps are inverse depth / disparity maps where White (255) = Near, Black (0) = Far.
+            # Using hyperbolic inverse disparity avoids unnatural spherical/cylindrical curvature:
+            #   Z = 1 / ( (1/z_max) + d_norm * ((1/z_min) - (1/z_max)) )
+            d_norm = np.clip(depth_raw.astype(np.float32) / 255.0, 0.0, 1.0)
+            top_mean = float(np.mean(d_norm[:max(1, int(h * 0.15)), :]))
+            bottom_mean = float(np.mean(d_norm[-max(1, int(h * 0.15)):, :]))
 
-            # Auto-detect polarity from border vs centre brightness
-            border_mean = np.mean([
-                depth_norm[0, :].mean(), depth_norm[-1, :].mean(),
-                depth_norm[:, 0].mean(), depth_norm[:, -1].mean()
-            ])
-            center_crop = depth_norm[int(h * 0.3):int(h * 0.7), int(w * 0.3):int(w * 0.7)]
-            center_mean = float(np.mean(center_crop)) if center_crop.size > 0 else 0.5
-
-            if center_mean > border_mean:
-                # Disparity / Inverse Depth (White = Close ≈ 0.45 m, Black = Far ≈ 2.8 m)
-                depth_m = 0.45 + (1.0 - depth_norm) * 2.35
-                depth_format = depth_format or "8-bit Disparity (White=Close 0.45 m, Black=Far 2.8 m)"
+            z_min, z_max = 0.4, 3.2
+            # Polarity detection: bottom rows (foreground table/floor) brighter than top rows (background)
+            if (bottom_mean > top_mean) or (bottom_mean > 0.5 and top_mean < 0.45):
+                # White = Near (standard AI disparity)
+                inv_z = (1.0 / z_max) + d_norm * ((1.0 / z_min) - (1.0 / z_max))
+                depth_m = 1.0 / np.maximum(inv_z, 1e-4)
+                depth_format = depth_format or f"8-bit AI Disparity (White=Near, {z_min:.1f}m–{z_max:.1f}m)"
             else:
-                # Direct metric depth (Black = Close ≈ 0.45 m, White = Far ≈ 2.8 m)
-                depth_m = 0.45 + depth_norm * 2.35
-                depth_format = depth_format or "8-bit Metric depth (Black=Close 0.45 m, White=Far 2.8 m)"
+                # Black = Near (sensor/synthetic depth)
+                inv_z = (1.0 / z_min) - d_norm * ((1.0 / z_min) - (1.0 / z_max))
+                depth_m = 1.0 / np.maximum(inv_z, 1e-4)
+                depth_format = depth_format or f"8-bit Depth Map (Black=Near, {z_min:.1f}m–{z_max:.1f}m)"
 
     # ── 4-channel RGBA: depth in alpha channel ─────────────────────────────
     elif img_pil.mode == 'RGBA':
         rgba_arr = np.array(img_pil)
         rgb = rgba_arr[:, :, :3]
         alpha = rgba_arr[:, :, 3].astype(np.float32)
-        depth_m = 0.3 + (alpha / 255.0) * 2.2
-        depth_format = "4-channel RGBA (Alpha = depth 0.3 – 2.5 m)"
+        # Unified encoder/decoder scale (0.3m – 3.0m) matching convert_depth_to_rgbd.py
+        depth_m = 0.3 + (alpha / 255.0) * 2.7
+        depth_format = "4-channel RGBA (Alpha = depth 0.3 – 3.0 m)"
 
-    # ── No depth available: synthesise from image structure ───────────────
+    # ── No depth available: synthesise from monocular image structure ──────
     else:
         y_grid = np.linspace(0, 1, h, dtype=np.float32)[:, None]
         depth_m = np.broadcast_to(1.4 - y_grid * 0.5, (h, w)).copy()
-        depth_format = "Monocular heuristic approximation"
+        depth_format = "Monocular depth approximation (0.9 – 1.4 m)"
+
+    # Sanitize NaN / infinite values
+    depth_m = np.where(np.isfinite(depth_m) & (depth_m > 0), depth_m, 1.0).astype(np.float32)
 
     # ── Sanity: ensure depth matches RGB shape ─────────────────────────────
     if rgb.shape[:2] != depth_m.shape[:2]:

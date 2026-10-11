@@ -1,10 +1,12 @@
 """
-Track B: Correspondence-Based 6D Pose Estimation via Proper PnP (Perspective-n-Point)
-Extracts 2D image keypoints, correlates them with 3D model coordinates using depth unprojection,
-and computes 6D pose using OpenCV solvePnPRansac (EPnP / Iterative) with Rodrigues rotation,
-reprojection error analysis, and ICP depth refinement.
+Track B: Geometric Correspondence Matching & PnP Engine.
+Solves 6D object pose (Rotation + Translation) using genuine 2D-to-3D
+correspondences constrained within the detected or selected object boundary.
+Explicitly visualizes the object boundary, keypoint correspondences,
+3D bounding box, and camera coordinate axes.
 """
 
+import os
 import io
 import math
 import base64
@@ -17,51 +19,9 @@ from module_data.rgbd_utils import get_default_camera_matrix
 
 class TrackBPnPEngine:
     """
-    Geometric 6D Pose Estimation via Perspective-n-Point (PnP).
-    Matches 2D image keypoints to 3D object model coordinates, unprojects depth,
-    and calculates optimal R (Rotation) and t (Translation) using cv2.solvePnPRansac.
+    Boundary-guided PnP solver using 2D-3D geometric correspondences
+    and RANSAC consensus.
     """
-
-    def __init__(self):
-        # Canonical 3D CAD/model keypoint templates for CLUBS / household objects (in meters)
-        # Bounding box vertices + surface centroid markers (8 box corners + 1 center)
-        self.default_model_dimensions = {
-            'Box': (0.18, 0.12, 0.09),
-            'Cup': (0.10, 0.10, 0.12),
-            'Can': (0.07, 0.07, 0.13),
-            'Bottle': (0.08, 0.08, 0.22),
-            'Default': (0.15, 0.12, 0.10),
-        }
-
-    def _get_3d_model_template(self, class_name):
-        """Generates canonical 3D object keypoints centered at local origin (0, 0, 0)."""
-        dim = self.default_model_dimensions.get('Default')
-        for key in self.default_model_dimensions:
-            if key.lower() in class_name.lower():
-                dim = self.default_model_dimensions[key]
-                break
-
-        dx, dy, dz = dim[0] / 2.0, dim[1] / 2.0, dim[2] / 2.0
-
-        # 8 corners + 6 face centers
-        points_3d = np.array([
-            [-dx, -dy, -dz],
-            [ dx, -dy, -dz],
-            [ dx,  dy, -dz],
-            [-dx,  dy, -dz],
-            [-dx, -dy,  dz],
-            [ dx, -dy,  dz],
-            [ dx,  dy,  dz],
-            [-dx,  dy,  dz],
-            [  0,   0, -dz], # Bottom face center
-            [  0,   0,  dz], # Top face center
-            [  0, -dy,   0], # Front face center
-            [  0,  dy,   0], # Back face center
-            [-dx,   0,   0], # Left face center
-            [ dx,   0,   0], # Right face center
-        ], dtype=np.float32)
-
-        return points_3d, dim
 
     def _rotation_matrix_to_quaternion(self, R):
         """Converts 3x3 rotation matrix to unit quaternion [qw, qx, qy, qz]."""
@@ -97,7 +57,7 @@ class TrackBPnPEngine:
         return 1.0, 0.0, 0.0, 0.0
 
     def _rotation_matrix_to_euler_deg(self, R):
-        """Calculates Euler angles (Roll, Pitch, Yaw) from 3x3 rotation matrix R."""
+        """Calculates Euler angles (Roll, Pitch, Yaw) in degrees from 3x3 rotation matrix R."""
         sy = math.sqrt(R[0, 0]**2 + R[1, 0]**2)
         singular = sy < 1e-6
         if not singular:
@@ -116,205 +76,172 @@ class TrackBPnPEngine:
         )
 
     def estimate_pose(self, rgb, depth_m, class_name="Target Object", confidence=93.8, K=None,
-                      target_point=None, bounding_box=None):
+                      target_point=None, bounding_box=None, object_points_3d=None,
+                      image_points_2d=None):
         """
-        Executes Track B Correspondence + Proper PnP pipeline:
-        1. Segment target object and extract 2D features within selected ROI.
-        2. Correlate with 3D model template points.
-        3. Execute cv2.solvePnPRansac with EPnP solver.
-        4. Convert Rodrigues rvec to 3x3 rotation matrix R.
-        5. Ground translation in verified RGB-D metric depth.
-        6. Compute reprojection error and inliers.
+        Estimates 6D pose using EPnP + RANSAC.
+        In Track B, the object boundary is explicitly enforced and rendered in the output.
         """
         h, w = rgb.shape[:2]
         if K is None:
             K = get_default_camera_matrix(width=w, height=h)
 
-        # --- Guard: sanitize depth map (NaN / Inf → 0) ----------------------
-        if not np.all(np.isfinite(depth_m)):
-            depth_m = np.where(np.isfinite(depth_m), depth_m, 0.0).astype(np.float32)
+        fx = float(K[0, 0])
+        fy = float(K[1, 1])
+        cx = float(K[0, 2])
+        cy = float(K[1, 2])
 
+        # 1. Resolve bounding box
+        if not bounding_box or len(bounding_box) != 4:
+            from module_ml.object_detector import ObjectDetector
+            detected = ObjectDetector.detect_objects(rgb, depth_m)
+            if detected:
+                bounding_box = detected[0]['bbox']
+                if class_name in ('Target Object', None):
+                    class_name = detected[0]['label']
+            else:
+                bounding_box = [int(w * 0.2), int(h * 0.2), int(w * 0.8), int(h * 0.8)]
 
-        # 1. Determine and refine object boundary ROI
-        if bounding_box and len(bounding_box) == 4:
-            x1, y1, x2, y2 = [int(v) for v in bounding_box]
-            x1, y1 = max(0, min(w - 10, x1)), max(0, min(h - 10, y1))
-            x2, y2 = max(x1 + 10, min(w, x2)), max(y1 + 10, min(h, y2))
-        elif target_point:
-            tx_pt = target_point.get('x', w / 2.0)
-            ty_pt = target_point.get('y', h / 2.0)
-            if tx_pt <= 1.0 and ty_pt <= 1.0:
-                tx_pt = tx_pt * w
-                ty_pt = ty_pt * h
-            cx_target = float(np.clip(tx_pt, 10, w - 10))
-            cy_target = float(np.clip(ty_pt, 10, h - 10))
-            box_w = int(w * 0.25)
-            box_h = int(h * 0.30)
-            x1 = max(0, int(cx_target - box_w / 2))
-            y1 = max(0, int(cy_target - box_h / 2))
-            x2 = min(w, int(cx_target + box_w / 2))
-            y2 = min(h, int(cy_target + box_h / 2))
-        else:
-            x1, y1 = max(10, int(w * 0.25)), max(10, int(h * 0.25))
-            x2, y2 = min(w - 10, int(w * 0.75)), min(h - 10, int(h * 0.75))
+        x1, y1, x2, y2 = [int(v) for v in bounding_box]
+        x1 = max(0, min(x1, w - 2))
+        y1 = max(0, min(y1, h - 2))
+        x2 = max(x1 + 1, min(x2, w))
+        y2 = max(y1 + 1, min(y2, h))
 
-        # Refine boundaries using depth discontinuity within the initial ROI
-        if 0 <= y1 < y2 <= h and 0 <= x1 < x2 <= w:
-            roi_d = depth_m[y1:y2, x1:x2]
-            valid_mask = (roi_d > 0.2) & (roi_d < 4.0)
-            if np.any(valid_mask):
-                med_d = float(np.median(roi_d[valid_mask]))
-                fg_mask = (np.abs(roi_d - med_d) < 0.25) & valid_mask
-                y_idx, x_idx = np.where(fg_mask)
-                if len(y_idx) > 100:
-                    pad = 4
-                    x1 = max(0, x1 + int(np.min(x_idx)) - pad)
-                    x2 = min(w, x1 + int(np.max(x_idx)) - int(np.min(x_idx)) + 2 * pad)
-                    y1 = max(0, y1 + int(np.min(y_idx)) - pad)
-                    y2 = min(h, y1 + int(np.max(y_idx)) - int(np.min(y_idx)) + 2 * pad)
+        # 2. Extract or validate 2D-3D correspondences
+        pts_2d = []
+        pts_3d = []
 
-        cx_img = (x1 + x2) / 2.0
-        cy_img = (y1 + y2) / 2.0
+        if object_points_3d is not None and image_points_2d is not None:
+            # Caller supplied correspondences (e.g. BOP / ground truth tests)
+            object_points_3d = np.asarray(object_points_3d, dtype=np.float32).reshape(-1, 3)
+            image_points_2d = np.asarray(image_points_2d, dtype=np.float32).reshape(-1, 2)
+            if len(object_points_3d) >= 4 and len(object_points_3d) == len(image_points_2d):
+                pts_3d = object_points_3d
+                pts_2d = image_points_2d
 
-        # Sample depth to determine object metric distance Tz
-        obj_depth = depth_m[y1:y2, x1:x2]
-        valid_depth = obj_depth[(obj_depth > 0.2) & (obj_depth < 4.0)]
-        if len(valid_depth) > 0:
-            target_tz = float(np.median(valid_depth))
-        else:
-            target_tz = float(depth_m[int(cy_img), int(cx_img)]) if 0 <= int(cy_img) < h and 0 <= int(cx_img) < w else 1.0
-            if target_tz <= 0.2 or target_tz > 4.0:
-                target_tz = 1.0
-
-        fx, fy = K[0, 0], K[1, 1]
-        cx, cy = K[0, 2], K[1, 2]
-
-        # Calculate exact metric physical dimensions from camera intrinsics
-        dim_l = max(0.04, float((x2 - x1) * target_tz / fx))   # metric width (X)
-        dim_w = max(0.04, float((y2 - y1) * target_tz / fy))   # metric height (Y)
-        if len(valid_depth) > 5:
-            d_range = float(np.percentile(valid_depth, 90) - np.percentile(valid_depth, 10))
-            dim_h = max(0.03, min(max(dim_l, dim_w), d_range if d_range > 0.03 else min(dim_l, dim_w) * 0.75))
-        else:
-            dim_h = max(0.03, min(dim_l, dim_w) * 0.75)
-
-        dx, dy, dz = dim_l / 2.0, dim_w / 2.0, dim_h / 2.0
-
-        # Construct canonical 3D model vertices centered at local origin (0, 0, 0)
-        model_3d_pts = np.array([
-            [-dx, -dy, -dz], # 0: Front Top-Left
-            [ dx, -dy, -dz], # 1: Front Top-Right
-            [ dx,  dy, -dz], # 2: Front Bottom-Right
-            [-dx,  dy, -dz], # 3: Front Bottom-Left
-            [-dx, -dy,  dz], # 4: Back Top-Left
-            [ dx, -dy,  dz], # 5: Back Top-Right
-            [ dx,  dy,  dz], # 6: Back Bottom-Right
-            [-dx,  dy,  dz], # 7: Back Bottom-Left
-            [  0, -dy, -dz], # 8: Front Top center
-            [  0,  dy, -dz], # 9: Front Bottom center
-            [-dx,   0, -dz], # 10: Front Left center
-            [ dx,   0, -dz], # 11: Front Right center
-            [  0,   0, -dz], # 12: Front Face center
-            [  0,   0,   0], # 13: Local Origin / Centroid
-        ], dtype=np.float32)
-
-        # Construct true 2D projection correspondences on the image plane
-        scale_back = target_tz / max(0.1, target_tz + dim_h)
-        back_w = (x2 - x1) * scale_back
-        back_h = (y2 - y1) * scale_back
-        bx1 = cx_img - back_w / 2.0
-        bx2 = cx_img + back_w / 2.0
-        by1 = cy_img - back_h / 2.0
-        by2 = cy_img + back_h / 2.0
-
-        img_2d_pts = np.array([
-            [x1, y1],         # 0: Front Top-Left
-            [x2, y1],         # 1: Front Top-Right
-            [x2, y2],         # 2: Front Bottom-Right
-            [x1, y2],         # 3: Front Bottom-Left
-            [bx1, by1],       # 4: Back Top-Left
-            [bx2, by1],       # 5: Back Top-Right
-            [bx2, by2],       # 6: Back Bottom-Right
-            [bx1, by2],       # 7: Back Bottom-Left
-            [cx_img, y1],     # 8: Front Top center
-            [cx_img, y2],     # 9: Front Bottom center
-            [x1, cy_img],     # 10: Front Left center
-            [x2, cy_img],     # 11: Front Right center
-            [cx_img, cy_img], # 12: Front Face center
-            [cx_img, cy_img], # 13: Centroid
-        ], dtype=np.float32)
-
-        tx_gt = float((cx_img - cx) * target_tz / fx)
-        ty_gt = float((cy_img - cy) * target_tz / fy)
-        tz_gt = target_tz
-
-        # 2. Solve Perspective-n-Point with RANSAC
-        dist_coeffs = np.zeros((4, 1), dtype=np.float32)
-
-        try:
-            success, rvec, tvec, inliers = cv2.solvePnPRansac(
-                objectPoints=model_3d_pts,
-                imagePoints=img_2d_pts,
-                cameraMatrix=K.astype(np.float32),
-                distCoeffs=dist_coeffs,
-                flags=cv2.SOLVEPNP_EPNP,
-                reprojectionError=4.0,
-                confidence=0.99,
-                iterationsCount=150
+        if len(pts_2d) < 4:
+            # Extract keypoints inside the object boundary
+            crop_rgb = rgb[y1:y2, x1:x2]
+            gray_crop = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
+            
+            # Use Shi-Tomasi corner detector for high-confidence local features
+            corners = cv2.goodFeaturesToTrack(
+                gray_crop, maxCorners=60, qualityLevel=0.01, minDistance=6
             )
-        except Exception:
-            success = False
-            rvec, tvec, inliers = None, None, None
+            
+            cand_pts_2d = []
+            if corners is not None:
+                for c in corners:
+                    u = float(c[0][0] + x1)
+                    v = float(c[0][1] + y1)
+                    cand_pts_2d.append([u, v])
 
-        if not success or rvec is None or np.isnan(rvec).any():
-            try:
-                success, rvec, tvec = cv2.solvePnP(
-                    objectPoints=model_3d_pts,
-                    imagePoints=img_2d_pts,
-                    cameraMatrix=K.astype(np.float32),
-                    distCoeffs=dist_coeffs,
-                    flags=cv2.SOLVEPNP_EPNP
-                )
-            except Exception:
-                rvec = np.array([[0.0], [0.0], [0.0]], dtype=np.float32)
-                tvec = np.array([[tx_gt], [ty_gt], [tz_gt]], dtype=np.float32)
-            inliers = np.arange(len(model_3d_pts)).reshape(-1, 1)
+            # If insufficient corners, sample grid points inside boundary
+            if len(cand_pts_2d) < 8:
+                step_x = max(8, (x2 - x1) // 6)
+                step_y = max(8, (y2 - y1) // 6)
+                for gy in range(y1 + step_y // 2, y2, step_y):
+                    for gx in range(x1 + step_x // 2, x2, step_x):
+                        cand_pts_2d.append([float(gx), float(gy)])
 
-        # 3. Ground Translation firmly to RGB-D sensor metric depth
-        if tvec is not None and not np.isnan(tvec).any() and abs(float(tvec[2, 0] if len(tvec.shape) > 1 else tvec[2]) - tz_gt) < 0.6:
-            tx = float(tvec[0, 0] if len(tvec.shape) > 1 else tvec[0])
-            ty = float(tvec[1, 0] if len(tvec.shape) > 1 else tvec[1])
-            tz = float(tvec[2, 0] if len(tvec.shape) > 1 else tvec[2])
-        else:
-            tx, ty, tz = tx_gt, ty_gt, tz_gt
+            # Sample 3D coordinates from metric depth map
+            valid_2d = []
+            valid_cam_3d = []
+            for u, v in cand_pts_2d:
+                iu, iv = int(round(u)), int(round(v))
+                if 0 <= iu < w and 0 <= iv < h:
+                    z = float(depth_m[iv, iu])
+                    if np.isfinite(z) and 0.15 < z < 8.0:
+                        x = (u - cx) * z / fx
+                        y = (v - cy) * z / fy
+                        valid_2d.append([u, v])
+                        valid_cam_3d.append([x, y, z])
 
-        # 4. Convert Rodrigues rotation vector to 3x3 rotation matrix R
-        if rvec is not None and not np.isnan(rvec).any():
-            R_matrix, _ = cv2.Rodrigues(rvec)
-        else:
-            R_matrix = np.eye(3, dtype=np.float32)
+            if len(valid_2d) >= 4:
+                valid_cam_3d = np.array(valid_cam_3d, dtype=np.float32)
+                t_init = np.median(valid_cam_3d, axis=0)
+                # Local 3D coordinates relative to object center
+                pts_3d = valid_cam_3d - t_init
+                pts_2d = np.array(valid_2d, dtype=np.float32)
+            else:
+                # Fallback: estimate rough translation from median depth
+                crop_d = depth_m[y1:y2, x1:x2]
+                valid_d = crop_d[(crop_d > 0.15) & (crop_d < 8.0)]
+                med_z = float(np.median(valid_d)) if len(valid_d) > 0 else 1.0
+                cx_box = (x1 + x2) / 2.0
+                cy_box = (y1 + y2) / 2.0
+                tx = (cx_box - cx) * med_z / fx
+                ty = (cy_box - cy) * med_z / fy
+                tz = med_z
+                return {
+                    'track': 'Track B (Geometric Correspondence + PnP + RANSAC)',
+                    'status': 'unavailable',
+                    'error': 'Insufficient visual features inside boundary for PnP consensus.',
+                    'boundary_2d': [x1, y1, x2, y2],
+                }
 
-        if np.isnan(R_matrix).any() or np.isinf(R_matrix).any():
-            R_matrix = np.eye(3, dtype=np.float32)
+        # 3. Solve PnP with RANSAC
+        pts_3d = np.asarray(pts_3d, dtype=np.float32).reshape(-1, 3)
+        pts_2d = np.asarray(pts_2d, dtype=np.float32).reshape(-1, 2)
+
+        success, rvec, tvec, inliers = cv2.solvePnPRansac(
+            pts_3d, pts_2d, np.asarray(K, dtype=np.float32),
+            distCoeffs=None, flags=cv2.SOLVEPNP_EPNP,
+            reprojectionError=4.0, confidence=0.99, iterationsCount=150
+        )
+
+        if not success or inliers is None or len(inliers) < 4:
+            # Fallback to direct solvePnP if RANSAC didn't find enough inliers
+            success, rvec, tvec = cv2.solvePnP(
+                pts_3d, pts_2d, np.asarray(K, dtype=np.float32),
+                distCoeffs=None, flags=cv2.SOLVEPNP_ITERATIVE
+            )
+            inliers = np.arange(len(pts_3d)).reshape(-1, 1) if success else None
+
+        if not success or rvec is None or tvec is None:
+            return {
+                'track': 'Track B (Geometric Correspondence + PnP + RANSAC)',
+                'status': 'unavailable',
+                'error': 'PnP solver did not converge on valid object pose.',
+                'boundary_2d': [x1, y1, x2, y2],
+            }
+
+        R_matrix, _ = cv2.Rodrigues(rvec)
+        tx, ty, tz = [float(v) for v in tvec.reshape(3)]
+
+        # If Tz is negative or too small, correct translation vector to camera frame
+        if tz <= 0.05:
+            crop_d = depth_m[y1:y2, x1:x2]
+            valid_d = crop_d[(crop_d > 0.15) & (crop_d < 8.0)]
+            tz = float(np.median(valid_d)) if len(valid_d) > 0 else 1.0
+            tx = float(((x1 + x2) / 2.0 - cx) * tz / fx)
+            ty = float(((y1 + y2) / 2.0 - cy) * tz / fy)
+            tvec = np.array([[tx], [ty], [tz]], dtype=np.float32)
 
         qw, qx, qy, qz = self._rotation_matrix_to_quaternion(R_matrix)
         roll, pitch, yaw = self._rotation_matrix_to_euler_deg(R_matrix)
 
-        # 5. Calculate Reprojection Error and Inlier Metrics
-        rvec_clean = np.nan_to_num(rvec) if rvec is not None else np.zeros((3, 1), dtype=np.float32)
-        tvec_clean = np.array([[tx], [ty], [tz]], dtype=np.float32)
-
-        projected_pts, _ = cv2.projectPoints(
-            model_3d_pts, rvec_clean, tvec_clean, K.astype(np.float32), dist_coeffs
+        # Reprojection error
+        projected, _ = cv2.projectPoints(
+            pts_3d, rvec, tvec, np.asarray(K, dtype=np.float32), distCoeffs=None
         )
-        projected_pts = np.nan_to_num(projected_pts.reshape(-1, 2))
-        errors = np.linalg.norm(img_2d_pts - projected_pts, axis=1)
-        mean_reprojection_error = round(float(np.mean(errors)), 2)
+        proj_2d = projected.reshape(-1, 2)
+        errors = np.linalg.norm(proj_2d - pts_2d, axis=1)
+        inlier_indices = inliers.reshape(-1) if inliers is not None else np.arange(len(pts_3d))
+        mean_reprojection_error = float(np.mean(errors[inlier_indices])) if len(inlier_indices) > 0 else 0.0
+        inlier_count = int(len(inlier_indices))
+        total_pts = int(len(pts_3d))
+        inlier_ratio = round((inlier_count / max(total_pts, 1)) * 100.0, 1)
 
-        inlier_count = len(inliers) if inliers is not None else len(model_3d_pts)
-        inlier_ratio = round(float(inlier_count / len(model_3d_pts) * 100.0), 1)
+        # 4. Compute 3D Bounding Box from spatial extent
+        min_3d = np.min(pts_3d, axis=0)
+        max_3d = np.max(pts_3d, axis=0)
+        dim_l = max(0.08, float(max_3d[0] - min_3d[0]))
+        dim_w = max(0.08, float(max_3d[1] - min_3d[1]))
+        dim_h = max(0.08, float(max_3d[2] - min_3d[2]))
 
-        # 6. 3D Bounding Box 8 corners
+        dx, dy, dz = dim_l / 2.0, dim_w / 2.0, dim_h / 2.0
         local_corners = np.array([
             [-dx, -dy, -dz],
             [ dx, -dy, -dz],
@@ -329,20 +256,18 @@ class TrackBPnPEngine:
         translation_vec = np.array([tx, ty, tz], dtype=np.float32)
         corners_3d_cam = (R_matrix @ local_corners.T).T + translation_vec
 
-        # Project 3D corners to 2D image coordinates
         corners_2d = []
         for pt in corners_3d_cam:
-            pz = max(0.05, float(pt[2])) if not np.isnan(pt[2]) else 1.0
-            pt0 = float(pt[0]) if not np.isnan(pt[0]) else 0.0
-            pt1 = float(pt[1]) if not np.isnan(pt[1]) else 0.0
-            px = int(np.clip((K[0, 0] * pt0 / pz) + K[0, 2], -w, 2 * w))
-            py = int(np.clip((K[1, 1] * pt1 / pz) + K[1, 2], -h, 2 * h))
+            pz = max(0.05, pt[2])
+            px = int((fx * pt[0] / pz) + cx)
+            py = int((fy * pt[1] / pz) + cy)
             corners_2d.append([px, py])
 
-        # 7. Visualization overlay
+        # 5. Render Track B visualization (EXPLICITLY SHOWING 2D BOUNDARY)
         vis_b64 = self._render_pnp_visualization(
-            rgb, img_2d_pts, inliers, corners_2d, (x1, y1, x2, y2), (tx, ty, tz), (roll, pitch, yaw),
-            class_name, confidence, mean_reprojection_error, inlier_ratio, (dim_l, dim_w, dim_h)
+            rgb, pts_2d, inliers, corners_2d, (x1, y1, x2, y2),
+            (tx, ty, tz), (roll, pitch, yaw), class_name, confidence,
+            mean_reprojection_error, inlier_ratio, (dim_l, dim_w, dim_h)
         )
 
         return {
@@ -373,11 +298,13 @@ class TrackBPnPEngine:
             },
             'pnp_metrics': {
                 'inlier_count': inlier_count,
-                'total_correspondences': len(model_3d_pts),
+                'total_correspondences': total_pts,
                 'inlier_ratio_pct': inlier_ratio,
                 'mean_reprojection_error_px': round(mean_reprojection_error, 2),
                 'convergence': 'Optimal' if mean_reprojection_error < 5.0 else 'Acceptable',
             },
+            'bounding_box_2d': [int(x1), int(y1), int(x2), int(y2)],
+            'boundary_2d': [int(x1), int(y1), int(x2), int(y2)],
             'bounding_box_3d': {
                 'length_m': round(dim_l, 3),
                 'width_m': round(dim_w, 3),
@@ -390,35 +317,41 @@ class TrackBPnPEngine:
             'pose_visualization': vis_b64,
         }
 
-    def _render_pnp_visualization(self, rgb, img_pts, inliers, corners_2d, bbox_2d, trans, euler, label, conf, rep_err, inlier_pct, dims):
-        """Visualizes PnP 2D-3D keypoint correspondences, boundary identification, 3D bounding box, and axes."""
+    def _render_pnp_visualization(self, rgb, img_pts, inliers, corners_2d, bbox_2d,
+                                  trans, euler, label, conf, rep_err, inlier_pct, dims):
+        """
+        Visualizes Track B output:
+        - 2D Object Boundary Box (green rectangle + glowing brackets)
+        - 3D Wireframe Bounding Box + 3D coordinate axes
+        - 2D Keypoint correspondences
+        """
         img = Image.fromarray(rgb).convert('RGB')
         draw = ImageDraw.Draw(img)
 
         bx1, by1, bx2, by2 = bbox_2d
         dim_l, dim_w, dim_h = dims
 
-        # 1. Draw 2D Object Boundary Box with glowing corners
-        boundary_color = (16, 185, 129) # Emerald green
-        corner_len = min(20, (bx2 - bx1) // 4, (by2 - by1) // 4)
-        
+        # 1. Draw 2D Object Boundary Box with prominent glowing corners
+        boundary_color = (16, 185, 129)  # Emerald green
+        corner_len = max(12, min(30, (bx2 - bx1) // 4, (by2 - by1) // 4))
+
         # Dashed/semi-transparent boundary rectangle
-        draw.rectangle([bx1, by1, bx2, by2], outline=(16, 185, 129, 140), width=1)
-        
-        # Solid corner brackets for boundary identification
-        draw.line([(bx1, by1), (bx1 + corner_len, by1)], fill=boundary_color, width=3)
-        draw.line([(bx1, by1), (bx1, by1 + corner_len)], fill=boundary_color, width=3)
-        draw.line([(bx2, by1), (bx2 - corner_len, by1)], fill=boundary_color, width=3)
-        draw.line([(bx2, by1), (bx2, by1 + corner_len)], fill=boundary_color, width=3)
-        draw.line([(bx1, by2), (bx1 + corner_len, by2)], fill=boundary_color, width=3)
-        draw.line([(bx1, by2), (bx1, by2 - corner_len)], fill=boundary_color, width=3)
-        draw.line([(bx2, by2), (bx2 - corner_len, by2)], fill=boundary_color, width=3)
-        draw.line([(bx2, by2), (bx2, by2 - corner_len)], fill=boundary_color, width=3)
+        draw.rectangle([bx1, by1, bx2, by2], outline=(16, 185, 129, 180), width=2)
+
+        # Corner brackets for distinct boundary identification
+        draw.line([(bx1, by1), (bx1 + corner_len, by1)], fill=boundary_color, width=4)
+        draw.line([(bx1, by1), (bx1, by1 + corner_len)], fill=boundary_color, width=4)
+        draw.line([(bx2, by1), (bx2 - corner_len, by1)], fill=boundary_color, width=4)
+        draw.line([(bx2, by1), (bx2, by1 + corner_len)], fill=boundary_color, width=4)
+        draw.line([(bx1, by2), (bx1 + corner_len, by2)], fill=boundary_color, width=4)
+        draw.line([(bx1, by2), (bx1, by2 - corner_len)], fill=boundary_color, width=4)
+        draw.line([(bx2, by2), (bx2 - corner_len, by2)], fill=boundary_color, width=4)
+        draw.line([(bx2, by2), (bx2, by2 - corner_len)], fill=boundary_color, width=4)
 
         # 2. Draw 3D Bounding Box Wireframe
         edges_front = [(0, 1), (1, 2), (2, 3), (3, 0)]
-        edges_back = [(4, 5), (5, 6), (6, 7), (7, 4)]
-        edges_conn = [(0, 4), (1, 5), (2, 6), (3, 7)]
+        edges_back  = [(4, 5), (5, 6), (6, 7), (7, 4)]
+        edges_conn  = [(0, 4), (1, 5), (2, 6), (3, 7)]
 
         magenta = (217, 70, 239)
         amber = (245, 158, 11)
@@ -458,7 +391,7 @@ class TrackBPnPEngine:
         draw.text((cx - axis_len // 2 - 12, cy - axis_len // 2 - 12), "Z", fill=(59, 130, 246))
 
         # 5. Boundary Tag with physical dimensions
-        dim_tag = f"Boundary: {dim_l*100:.1f} × {dim_w*100:.1f} × {dim_h*100:.1f} cm | Depth: {trans[2]:.2f}m"
+        dim_tag = f"Track B Boundary: {dim_l*100:.1f} × {dim_w*100:.1f} × {dim_h*100:.1f} cm | Depth: {trans[2]:.2f}m"
         draw.rectangle([bx1, max(0, by1 - 20), bx1 + len(dim_tag) * 6 + 10, by1], fill=(16, 185, 129))
         draw.text((bx1 + 4, max(0, by1 - 18)), dim_tag, fill=(0, 0, 0))
 

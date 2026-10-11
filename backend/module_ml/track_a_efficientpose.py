@@ -9,11 +9,11 @@ import os
 import io
 import math
 import base64
+import json
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 import cv2
 
 from module_data.rgbd_utils import load_rgbd, get_default_camera_matrix
@@ -25,9 +25,8 @@ class EfficientPoseNetwork(nn.Module):
     Backbone: Efficient feature extractor with BiFPN-style multi-scale fusion.
     Heads:
       1. Class Subnetwork (object classification)
-      2. 2D Box Subnetwork (2D bounding box regression)
-      3. Translation Subnetwork (direct regression of Tx, Ty, Tz in meters)
-      4. Rotation Subnetwork (direct regression of 6D continuous rotation / quaternion)
+      2. Translation Subnetwork (direct regression of Tx, Ty, Tz and dimensions)
+      3. Rotation Subnetwork (direct regression of roll, pitch, yaw in degrees)
     """
     def __init__(self, in_channels=4, num_classes=85):
         super().__init__()
@@ -71,26 +70,18 @@ class EfficientPoseNetwork(nn.Module):
             nn.Linear(128, num_classes),
         )
 
-        # 2. 2D Bounding Box Subnet [xmin, ymin, xmax, ymax] normalized [0, 1]
-        self.head_box = nn.Sequential(
-            nn.Linear(256, 64),
-            nn.SiLU(),
-            nn.Linear(64, 4),
-            nn.Sigmoid(),
-        )
-
-        # 3. Translation Subnet [dx, dy, Tz, length, width, height]
+        # Direct full-frame regression: [Tx, Ty, Tz, length, width, height].
         self.head_translation = nn.Sequential(
             nn.Linear(256, 128),
             nn.SiLU(),
             nn.Linear(128, 6),
         )
 
-        # 4. Rotation Subnet (Continuous 6D rotation representation or unit quaternion [qw, qx, qy, qz])
+        # Direct full-frame Euler angle regression: [roll, pitch, yaw].
         self.head_rotation = nn.Sequential(
             nn.Linear(256, 128),
             nn.SiLU(),
-            nn.Linear(128, 4),
+            nn.Linear(128, 3),
         )
 
     def forward(self, x):
@@ -102,14 +93,11 @@ class EfficientPoseNetwork(nn.Module):
         shared = self.fc_shared(pooled)
 
         class_logits = self.head_class(shared)
-        box_norm = self.head_box(shared)
         trans_raw = self.head_translation(shared)
-        rot_raw = self.head_rotation(shared)
-        
-        # Normalize quaternion to unit length
-        quat = F.normalize(rot_raw, p=2, dim=1)
-
-        return class_logits, box_norm, trans_raw, quat
+        # Keep angles in a finite, interpretable range while leaving the model
+        # responsible for predicting them from the complete image.
+        euler_deg = torch.tanh(self.head_rotation(shared)) * 180.0
+        return class_logits, trans_raw, euler_deg
 
 
 class TrackAEfficientPoseEngine:
@@ -122,14 +110,35 @@ class TrackAEfficientPoseEngine:
         self.network = EfficientPoseNetwork(in_channels=4, num_classes=85).to(self.device)
         self.network.eval()
         self.is_trained = False
+        self.class_names = {}
+
+        if not model_path:
+            search_dirs = [
+                os.path.join(os.path.dirname(__file__), '..', '..', 'models'),
+                os.path.join(os.path.dirname(__file__), '..', 'models'),
+                os.path.abspath('models'),
+            ]
+            for d in search_dirs:
+                cand = os.path.join(d, 'efficientpose_weights.pt')
+                if os.path.exists(cand):
+                    model_path = cand
+                    break
 
         if model_path and os.path.exists(model_path):
             try:
-                state_dict = torch.load(model_path, map_location=self.device)
+                checkpoint = torch.load(model_path, map_location=self.device)
+                state_dict = checkpoint.get('state_dict', checkpoint) if isinstance(checkpoint, dict) else checkpoint
                 self.network.load_state_dict(state_dict)
                 self.is_trained = True
             except Exception as e:
                 print(f"[TrackA] Could not load weights from {model_path}: {e}")
+        if model_path:
+            names_path = os.path.join(os.path.dirname(model_path), 'class_names.json')
+            try:
+                with open(names_path, 'r', encoding='utf-8') as names_file:
+                    self.class_names = json.load(names_file)
+            except (OSError, json.JSONDecodeError):
+                self.class_names = {}
 
     def _quaternion_to_rotation_matrix(self, q):
         """Convert quaternion [qw, qx, qy, qz] to 3x3 rotation matrix R."""
@@ -167,6 +176,20 @@ class TrackAEfficientPoseEngine:
             round(math.degrees(yaw), 2)
         )
 
+    @staticmethod
+    def _euler_deg_to_quaternion(roll, pitch, yaw):
+        """Convert directly regressed Euler angles to [w, x, y, z]."""
+        r, p, y = np.radians([roll, pitch, yaw]) / 2.0
+        cr, sr = math.cos(r), math.sin(r)
+        cp, sp = math.cos(p), math.sin(p)
+        cy, sy = math.cos(y), math.sin(y)
+        return tuple(float(v) for v in (
+            cr * cp * cy + sr * sp * sy,
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+        ))
+
     def estimate_pose(self, rgb, depth_m, class_name="Target Object", confidence=91.4, K=None,
                       target_point=None, bounding_box=None):
         """
@@ -178,12 +201,19 @@ class TrackAEfficientPoseEngine:
             class_name: Optional predicted label
             confidence: Optional classification confidence
             K: (3, 3) Camera intrinsic matrix
-            target_point: Optional dict {'x': u, 'y': v} in px or normalized 0..1
-            bounding_box: Optional [xmin, ymin, xmax, ymax]
+            target_point: Accepted for API compatibility; ignored by Track A.
+            bounding_box: Accepted for API compatibility; ignored by Track A.
 
         Returns:
             dict containing Track A 6D pose estimation metrics.
         """
+        if not self.is_trained:
+            return {
+                'track': 'Track A (direct full-frame pose regression)',
+                'status': 'unavailable',
+                'error': 'A trained pose checkpoint is required. The classifier checkpoint is not a pose model.',
+            }
+
         h, w = rgb.shape[:2]
         if K is None:
             K = get_default_camera_matrix(width=w, height=h)
@@ -204,78 +234,28 @@ class TrackAEfficientPoseEngine:
         img_tensor = torch.from_numpy(img_resized).permute(2, 0, 1).unsqueeze(0).float().to(self.device)
 
         with torch.no_grad():
-            class_logits, box_norm, trans_raw, quat_norm = self.network(img_tensor)
+            class_logits, trans_raw, euler_raw = self.network(img_tensor)
 
-        # 1. 2D Bounding box & Centroid
-        if bounding_box and len(bounding_box) == 4:
-            xmin, ymin, xmax, ymax = [int(v) for v in bounding_box]
-            xmin = max(0, min(w - 10, xmin))
-            ymin = max(0, min(h - 10, ymin))
-            xmax = max(xmin + 10, min(w, xmax))
-            ymax = max(ymin + 10, min(h, ymax))
-            u_c = (xmin + xmax) / 2.0
-            v_c = (ymin + ymax) / 2.0
-        elif target_point:
-            tx_pt = target_point.get('x', w / 2.0)
-            ty_pt = target_point.get('y', h / 2.0)
-            # If normalized 0..1
-            if tx_pt <= 1.0 and ty_pt <= 1.0:
-                tx_pt = tx_pt * w
-                ty_pt = ty_pt * h
-            u_c = float(np.clip(tx_pt, 10, w - 10))
-            v_c = float(np.clip(ty_pt, 10, h - 10))
-            box_w = int(w * 0.25)
-            box_h = int(h * 0.30)
-            xmin = max(0, int(u_c - box_w / 2))
-            ymin = max(0, int(v_c - box_h / 2))
-            xmax = min(w, int(u_c + box_w / 2))
-            ymax = min(h, int(v_c + box_h / 2))
-        else:
-            box = box_norm.cpu().numpy()[0]
-            xmin = int(box[0] * w * 0.4) + int(w * 0.1)
-            ymin = int(box[1] * h * 0.4) + int(h * 0.1)
-            xmax = min(w - 10, xmin + int(w * 0.45))
-            ymax = min(h - 10, ymin + int(h * 0.45))
-            u_c = (xmin + xmax) / 2.0
-            v_c = (ymin + ymax) / 2.0
+        # Track A never consumes a selected target point or object boundary.
+        # Both pose translation and angles come directly from the full-frame model.
+        tx, ty, tz, l_m, w_m, h_m = trans_raw.cpu().numpy()[0].astype(float)
+        roll, pitch, yaw = euler_raw.cpu().numpy()[0].astype(float)
+        class_probabilities = torch.softmax(class_logits, dim=1)[0]
+        predicted_class_index = int(torch.argmax(class_probabilities).item())
+        predicted_class = self.class_names.get(str(predicted_class_index), class_name)
+        classification_confidence = float(class_probabilities[predicted_class_index].item() * 100.0)
+        if not np.isfinite([tx, ty, tz, l_m, w_m, h_m, roll, pitch, yaw]).all():
+            return {'track': 'Track A (direct full-frame pose regression)', 'status': 'unavailable',
+                    'error': 'The pose model returned non-finite values.'}
+        if tz <= 0 or min(l_m, w_m, h_m) <= 0:
+            return {'track': 'Track A (direct full-frame pose regression)', 'status': 'unavailable',
+                    'error': 'The pose model returned invalid metric translation or dimensions.'}
 
-        # 2. Translation regression:
-        # Extract depth inside bounding box from depth map
-        obj_depth_crop = depth_m[ymin:ymax, xmin:xmax]
-        valid_crop = obj_depth_crop[(obj_depth_crop > 0.2) & (obj_depth_crop < 4.0)]
-        if len(valid_crop) > 0:
-            tz = float(np.median(valid_crop))
-        else:
-            tz = float(depth_m[int(v_c), int(u_c)]) if 0 <= int(v_c) < h and 0 <= int(u_c) < w else 0.85
-            if tz <= 0.2 or tz > 4.0:
-                tz = 1.0
-
-        # Pinhole reprojection to compute Tx and Ty from camera intrinsics
-        fx, fy = K[0, 0], K[1, 1]
-        cx, cy = K[0, 2], K[1, 2]
-        tx = float((u_c - cx) * tz / fx)
-        ty = float((v_c - cy) * tz / fy)
-
-        # 3. Rotation regression:
-        q = quat_norm.cpu().numpy()[0]
-        norm_q = np.linalg.norm(q)
-        if norm_q > 0:
-            q = q / norm_q
-        else:
-            q = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-
-        qw, qx, qy, qz = [round(float(val), 4) for val in q]
+        roll, pitch, yaw = (round(float(v), 2) for v in (roll, pitch, yaw))
+        qw, qx, qy, qz = self._euler_deg_to_quaternion(roll, pitch, yaw)
         R_matrix = self._quaternion_to_rotation_matrix((qw, qx, qy, qz))
-        roll, pitch, yaw = self._quaternion_to_euler_deg((qw, qx, qy, qz))
-
-        # 4. 3D Bounding box dimensions (meters)
-        # Approximate dimensions based on 2D box scale & depth
-        l_m = round(float((xmax - xmin) * tz / fx * 0.85), 3)
-        w_m = round(float((ymax - ymin) * tz / fy * 0.85), 3)
-        h_m = round(float(min(l_m, w_m) * 0.8), 3)
-        l_m = max(0.08, l_m)
-        w_m = max(0.06, w_m)
-        h_m = max(0.05, h_m)
+        l_m, w_m, h_m = (round(float(v), 3) for v in (l_m, w_m, h_m))
+        K = K if K is not None else get_default_camera_matrix(width=w, height=h)
 
         # 8 corners in 3D object local coordinate frame
         dx, dy, dz = l_m / 2.0, w_m / 2.0, h_m / 2.0
@@ -304,14 +284,15 @@ class TrackAEfficientPoseEngine:
 
         # Render 3D pose visualization
         vis_b64 = self._render_pose_visualization(
-            rgb, corners_2d, (tx, ty, tz), (roll, pitch, yaw), class_name, confidence, K
+            rgb, corners_2d, (tx, ty, tz), (roll, pitch, yaw), predicted_class,
+            classification_confidence, K
         )
 
         return {
             'track': 'Track A (EfficientPose Direct Neural Regression)',
             'status': 'success',
-            'object_name': class_name,
-            'confidence_pct': float(confidence),
+            'object_name': predicted_class,
+            'classification_confidence_pct': round(classification_confidence, 2),
             'translation_vector_m': {
                 'x': round(tx, 3),
                 'y': round(ty, 3),
@@ -332,7 +313,7 @@ class TrackAEfficientPoseEngine:
                 'yaw': yaw,
                 'formatted': f"Roll: {roll}°, Pitch: {pitch}°, Yaw: {yaw}°",
             },
-            'bounding_box_2d': [xmin, ymin, xmax, ymax],
+            'bounding_box_2d': None,
             'bounding_box_3d': {
                 'length_m': l_m,
                 'width_m': w_m,
@@ -390,7 +371,7 @@ class TrackAEfficientPoseEngine:
 
         # Header badge (no bounding box — Track A shows direct overlay)
         badge_text = (
-            f"Track A (EfficientPose): {label} ({conf:.1f}%) | "
+            f"Track A: {label} (class {conf:.1f}%) | "
             f"T=[{trans[0]:.2f}, {trans[1]:.2f}, {trans[2]:.2f}]m"
         )
         draw.rectangle([10, 10, len(badge_text) * 8 + 20, 36], fill=(15, 23, 42, 220))

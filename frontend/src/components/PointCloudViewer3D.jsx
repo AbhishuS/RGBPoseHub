@@ -9,6 +9,7 @@ export default function PointCloudViewer3D({ pointCloudData, boundingBox3D, obje
   const [showAxes, setShowAxes] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [isRotating, setIsRotating] = useState(true);
+  const [invertZ, setInvertZ] = useState(false);
 
   // References to keep Three.js instances
   const sceneRef = useRef(null);
@@ -77,12 +78,15 @@ export default function PointCloudViewer3D({ pointCloudData, boundingBox3D, obje
 
     let sumX = 0, sumY = 0, sumZ = 0;
 
+    const minZ = pointCloudData.bounds?.min_z ?? 0.4;
+    const maxZ = pointCloudData.bounds?.max_z ?? 3.2;
+
     for (let i = 0; i < numPoints; i++) {
       const p = pointsList[i];
       // Invert Y to match Three.js coordinate system (Three.js +Y is up, camera +Y is down)
       const px = p[0];
       const py = -p[1];
-      const pz = p[2];
+      const pz = invertZ ? (minZ + maxZ - p[2]) : p[2];
 
       positions[i * 3 + 0] = px;
       positions[i * 3 + 1] = py;
@@ -184,7 +188,7 @@ export default function PointCloudViewer3D({ pointCloudData, boundingBox3D, obje
       geometry.dispose();
       material.dispose();
     };
-  }, [pointCloudData, boundingBox3D]);
+  }, [pointCloudData, boundingBox3D, invertZ]);
 
   // Dynamic property updates without full re-render
   useEffect(() => {
@@ -256,7 +260,7 @@ export default function PointCloudViewer3D({ pointCloudData, boundingBox3D, obje
             boxShadow: '0 0 15px rgba(6, 182, 212, 0.4)',
             fontSize: '1.2rem',
           }}>
-            🪐
+
           </div>
           <div>
             <h4 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 600, color: '#f8fafc', letterSpacing: '-0.01em' }}>
@@ -302,7 +306,7 @@ export default function PointCloudViewer3D({ pointCloudData, boundingBox3D, obje
               transition: 'all 0.2s',
             }}
           >
-            📦 {showBox ? 'Hide 3D Box' : 'Show 3D Box'}
+             {showBox ? 'Hide 3D Box' : 'Show 3D Box'}
           </button>
 
           <button
@@ -318,7 +322,24 @@ export default function PointCloudViewer3D({ pointCloudData, boundingBox3D, obje
               transition: 'all 0.2s',
             }}
           >
-            🎯 XYZ Axes
+             XYZ Axes
+          </button>
+
+          <button
+            onClick={() => setInvertZ(!invertZ)}
+            style={{
+              background: invertZ ? 'rgba(168, 85, 247, 0.25)' : 'rgba(255, 255, 255, 0.06)',
+              border: `1px solid ${invertZ ? '#a855f7' : 'rgba(255, 255, 255, 0.15)'}`,
+              color: invertZ ? '#d8b4fe' : '#cbd5e1',
+              padding: '0.4rem 0.8rem',
+              borderRadius: '8px',
+              fontSize: '0.8rem',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+            title="Invert depth polarity (flips foreground and background along Z-axis)"
+          >
+            {invertZ ? '↕️ Depth Inverted' : '↕️ Invert Depth'}
           </button>
 
           <button
@@ -334,7 +355,7 @@ export default function PointCloudViewer3D({ pointCloudData, boundingBox3D, obje
               transition: 'all 0.2s',
             }}
           >
-            🔄 Reset View
+             Reset View
           </button>
         </div>
       </div>
@@ -369,9 +390,9 @@ export default function PointCloudViewer3D({ pointCloudData, boundingBox3D, obje
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <span>🖱️ <strong>Left Click + Drag:</strong> 360° Orbit</span>
-          <span>📜 <strong>Scroll:</strong> Zoom</span>
-          <span>🖱️ <strong>Right Click:</strong> Pan</span>
+          <span>️ <strong>Left Click + Drag:</strong> 360° Orbit</span>
+          <span> <strong>Scroll:</strong> Zoom</span>
+          <span>️ <strong>Right Click:</strong> Pan</span>
         </div>
       </div>
 

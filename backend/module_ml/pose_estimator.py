@@ -42,7 +42,8 @@ class PoseEstimator:
 
     def estimate_pose(self, image_path, depth_path=None, depth_stats=None,
                       prediction_info=None, track='both', camera_params=None,
-                      target_point=None, bounding_box=None, selected_object_name=None):
+                      target_point=None, bounding_box=None, selected_object_name=None,
+                      object_points_3d=None, image_points_2d=None):
         """
         Estimates 6D Object Pose for a specific targeted object using Track A, Track B, or both.
         
@@ -128,15 +129,37 @@ class PoseEstimator:
         if track in ('track_b', 'both'):
             res_b = self.track_b.estimate_pose(
                 rgb, depth_m, class_name=class_name, confidence=confidence, K=K,
-                target_point=target_point, bounding_box=bounding_box
+                target_point=target_point, bounding_box=bounding_box,
+                object_points_3d=object_points_3d, image_points_2d=image_points_2d
             )
+
+        usable_a = res_a if res_a and res_a.get('status') == 'success' else None
+        usable_b = res_b if res_b and res_b.get('status') == 'success' else None
+        if not usable_a and not usable_b:
+            return {
+                'status': 'unavailable',
+                'error': 'No pose track has the trained model or geometric correspondences required for a valid estimate.',
+                'object_name': class_name,
+                'candidate_objects': detected_objects,
+                'selected_target': {
+                    'point': target_point,
+                    'bounding_box': bounding_box,
+                    'object_name': class_name,
+                },
+                'depth_info': depth_info,
+                'track_selected': track,
+                'track_a': res_a,
+                'track_b': res_b,
+                'comparison': None,
+                'point_cloud_3d': [],
+            }
 
         # 4. Generate Interactive 3D Point Cloud for Three.js
         point_cloud = create_point_cloud_payload(rgb, depth_m, K=K, max_points=25000)
 
         # 5. Dual-Track Comparison (if both tracks executed)
         comparison = None
-        if res_a and res_b:
+        if usable_a and usable_b:
             # Translation Euclidean distance (m)
             ta = np.array([res_a['translation_vector_m']['x'],
                            res_a['translation_vector_m']['y'],
@@ -161,15 +184,14 @@ class PoseEstimator:
             }
 
         # Select active visualization
-        active_vis = res_a['pose_visualization'] if res_a else res_b['pose_visualization']
+        primary = usable_a if usable_a else usable_b
+        active_vis = primary.get('pose_visualization')
         
         # Determine primary translation and rotation for backward compatibility with UI
-        primary = res_a if res_a else res_b
-
         return {
-            'status': 'success',
+            'status': 'success' if (usable_a and usable_b) else 'partial',
             'object_name': class_name,
-            'confidence_pct': confidence,
+            'classification_confidence_pct': primary.get('classification_confidence_pct'),
             'candidate_objects': detected_objects,
             'selected_target': {
                 'point': target_point,

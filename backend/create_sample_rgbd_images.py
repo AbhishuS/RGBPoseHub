@@ -238,9 +238,12 @@ def create_sample_rgbd_images(output_dir):
         img_rgbd.save(out_path, 'PNG')
         generated_files.append(out_path)
 
-        # Also save separate depth file
+        # Save the separate depth companion as uint16 millimeters. The alpha
+        # channel remains a visualization-only legacy channel; only this
+        # explicitly scaled map is used for metric pose estimation.
         depth_pair_path = os.path.join(output_dir, fname.replace('.png', '_depth.png'))
-        Image.fromarray(depth_arr, mode='L').save(depth_pair_path, 'PNG')
+        depth_mm = np.clip(depth_arr.astype(np.float32) * 10.0, 1, 65535).astype(np.uint16)
+        Image.fromarray(depth_mm).save(depth_pair_path, 'PNG')
 
         print(f"  ✓ Generated: {label} → {fname}")
 

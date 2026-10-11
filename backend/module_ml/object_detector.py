@@ -174,7 +174,58 @@ class ObjectDetector:
             })
             obj_idx += 1
 
-        # --- Fallback: no segmented components ---------------------------------
+        # --- Fallback: RGB edge & contour detection if depth clustering is sparse ---
+        if len(objects) == 0:
+            gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+            edges = cv2.Canny(blurred, 35, 110)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+            closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+            contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            valid_contours = [c for c in contours if cv2.contourArea(c) > (w * h * 0.03)]
+            valid_contours.sort(key=cv2.contourArea, reverse=True)
+
+            for c in valid_contours[:4]:
+                bx, by, bw, bh = cv2.boundingRect(c)
+                if bw > w * 0.9 and bh < h * 0.3:
+                    continue
+                x1 = max(0, bx - 6)
+                y1 = max(0, by - 6)
+                x2 = min(w, bx + bw + 6)
+                y2 = min(h, by + bh + 6)
+
+                crop_d = depth_safe[y1:y2, x1:x2]
+                valid_crop = crop_d[(crop_d > 0.2) & (crop_d < 3.5)]
+                median_d = float(np.median(valid_crop)) if len(valid_crop) > 0 else 1.2
+                cx_c = int((x1 + x2) / 2)
+                cy_c = int((y1 + y2) / 2)
+
+                rgb_crop = rgb[y1:y2, x1:x2]
+                label = cls._infer_label(rgb_crop, obj_idx)
+                color = cls.PALETTE[(obj_idx - 1) % len(cls.PALETTE)]
+
+                objects.append({
+                    'id': f'obj_{obj_idx}',
+                    'label': label,
+                    'confidence_pct': 89.0,
+                    'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                    'bbox_norm': [
+                        float(round(float(x1) / w, 4)),
+                        float(round(float(y1) / h, 4)),
+                        float(round(float(x2) / w, 4)),
+                        float(round(float(y2) / h, 4)),
+                    ],
+                    'center': {'x': int(cx_c), 'y': int(cy_c)},
+                    'center_norm': {
+                        'x': float(round(float(cx_c) / w, 4)),
+                        'y': float(round(float(cy_c) / h, 4)),
+                    },
+                    'depth_m': round(median_d, 2),
+                    'color': str(color),
+                })
+                obj_idx += 1
+
         if len(objects) == 0:
             cx_fb, cy_fb = w // 2, h // 2
             x1f, y1f = int(w * 0.25), int(h * 0.2)

@@ -1,0 +1,30 @@
+services:
+  # Backend API
+  - type: web
+    name: rgb-pose-hub-api
+    env: python
+    region: oregon
+    plan: free
+    rootDir: .
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && gunicorn app:create_app()
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+
+  # Frontend Web Application
+  - type: web
+    name: rgb-pose-hub-frontend
+    env: static
+    region: oregon
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

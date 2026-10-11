@@ -39,7 +39,7 @@ class ForensicAnalyzer:
         from module_data.rgbd_utils import _pil_open_any
         return _pil_open_any(path)
 
-    def analyze(self, image_path, depth_image_path=None):
+    def analyze(self, image_path, depth_image_path=None, original_filename=None):
         """
         Runs complete Sherloq forensic analysis suite.
         Returns detailed report containing all analytical modules.
@@ -55,7 +55,7 @@ class ForensicAnalyzer:
         file_size = os.path.getsize(image_path)
 
         # 1. Tools & General
-        metadata = self._extract_metadata(image_path, img, file_size)
+        metadata = self._extract_metadata(image_path, img, file_size, original_filename=original_filename)
         hashes = self._calculate_hashes(image_path, img)
         hex_dump = self._generate_hex_dump(image_path)
 
@@ -99,20 +99,22 @@ class ForensicAnalyzer:
             'rgbd_gatekeeper': rgbd_gatekeeper,
         }
 
-    def _extract_metadata(self, path, img, size_bytes):
+    def _extract_metadata(self, path, img, size_bytes, original_filename=None):
         w, h = img.size
         mode = img.mode
-        ext = os.path.splitext(path)[1].replace('.', '').upper()
+        ref_path = original_filename or path
+        ext = os.path.splitext(ref_path)[1].replace('.', '').upper()
+        disk_ext = os.path.splitext(path)[1].replace('.', '').upper()
         raw_fmt = getattr(img, 'format', None) or ext
 
-        # Strictly preserve user's uploaded file format
-        if ext in ('JPG', 'JPEG'):
-            display_fmt = 'JPEG'
-        elif ext == 'PNG':
+        # Strictly preserve user's uploaded file format (JPG as JPG, PNG as PNG, etc.)
+        if ext in ('JPG', 'JPEG') or disk_ext in ('JPG', 'JPEG') or raw_fmt == 'JPEG':
+            display_fmt = 'JPG' if (ext in ('JPG', '') or disk_ext == 'JPG') else 'JPEG'
+        elif ext == 'PNG' or disk_ext == 'PNG' or raw_fmt == 'PNG':
             display_fmt = 'PNG'
-        elif ext == 'PDF':
+        elif ext == 'PDF' or disk_ext == 'PDF' or 'PDF' in str(raw_fmt):
             display_fmt = 'PDF'
-        elif ext in ('HEIC', 'HEIF'):
+        elif ext in ('HEIC', 'HEIF') or disk_ext in ('HEIC', 'HEIF') or raw_fmt in ('HEIF', 'HEIC'):
             display_fmt = 'HEIC'
         else:
             display_fmt = ext or getattr(img, 'format', 'RGB')
@@ -695,42 +697,51 @@ class ForensicAnalyzer:
         has_depth = False
         depth_array = None
         depth_source = None
+        unverified_depth_source = None
+        unverified_preview = None
         from module_data.rgbd_utils import _pil_open_any
 
         # ── 1: User-supplied explicit depth map (highest priority) ─────────
         if depth_image_path and os.path.exists(depth_image_path):
             try:
                 d_img = _pil_open_any(depth_image_path)
-                d_arr = np.array(d_img, dtype=np.float32)
+                d_arr = np.array(d_img)
                 if len(d_arr.shape) == 3:
                     d_arr = d_arr[:, :, 0]
-                has_depth = True
-                depth_array = d_arr
-                depth_source = f'User-Supplied Depth Map ({os.path.basename(depth_image_path)})'
+                if d_arr.dtype == np.uint16:
+                    has_depth = True
+                    depth_array = d_arr.astype(np.float32) / 1000.0
+                    depth_source = f'User Depth Map in millimeters ({os.path.basename(depth_image_path)})'
+                else:
+                    # 8-bit depth map (JPEG, PNG, etc.) with polarity detection & hyperbolic inversion
+                    has_depth = True
+                    dh, dw = d_arr.shape[:2]
+                    d_norm = np.clip(d_arr.astype(np.float32) / 255.0, 0.0, 1.0)
+                    top_m = float(np.mean(d_norm[:max(1, int(dh * 0.15)), :]))
+                    bot_m = float(np.mean(d_norm[-max(1, int(dh * 0.15)):, :]))
+                    z_min, z_max = 0.4, 3.2
+                    if (bot_m > top_m) or (bot_m > 0.5 and top_m < 0.45):
+                        # White = Near (standard AI disparity / Apple Portrait)
+                        inv_z = (1.0 / z_max) + d_norm * ((1.0 / z_min) - (1.0 / z_max))
+                        depth_array = 1.0 / np.maximum(inv_z, 1e-4)
+                        depth_source = f'User Depth Map (AI Disparity White=Near, {os.path.basename(depth_image_path)})'
+                    else:
+                        inv_z = (1.0 / z_min) - d_norm * ((1.0 / z_min) - (1.0 / z_max))
+                        depth_array = 1.0 / np.maximum(inv_z, 1e-4)
+                        depth_source = f'User Depth Map ({os.path.basename(depth_image_path)})'
             except Exception:
                 pass
 
-        # ── 2: 4-channel RGBA (depth in alpha) ─────────────────────────────
-        if not has_depth:
-            if img.mode in ('RGBA', 'LA') or len(img.getbands()) == 4:
-                arr = np.array(img)
-                ch4 = arr[:, :, 3]
-                ch4_var = np.var(ch4)
-                ch4_unique = np.unique(ch4)
-                if len(ch4_unique) > 5 and ch4_var > 1.0:
-                    has_depth = True
-                    depth_array = ch4.astype(np.float32)
-                    depth_source = '4th Image Channel (RGBD Depth)'
-
-        # ── 3: 16-bit depth mode ───────────────────────────────────────────
-        if not has_depth and img.mode in ('I;16', 'I;16B', 'I;16L', 'I', 'F'):
-            arr = np.array(img, dtype=np.float32)
-            if np.var(arr) > 0:
+        # ── 2: Check 4-channel RGBA for embedded depth ─────────────────────
+        if not has_depth and getattr(img, 'mode', '') == 'RGBA':
+            alpha = np.array(img)[:, :, 3]
+            alpha_std = float(np.std(alpha))
+            if alpha_std > 2.0:  # Channel has depth variance
                 has_depth = True
-                depth_array = arr
-                depth_source = '16-Bit Depth Mode'
+                depth_array = 0.3 + (alpha.astype(np.float32) / 255.0) * 2.7
+                depth_source = 'Embedded RGBA 4th Channel Depth (0.3m – 3.0m)'
 
-        # ── E: Auto-discover companion depth file ──────────────────────────
+        # ── 3: Auto-discover companion depth file ──────────────────────────
         if not has_depth and image_path:
             dir_name, base_name = os.path.split(image_path)
             fname_no_ext = os.path.splitext(base_name)[0]
@@ -751,13 +762,16 @@ class ForensicAnalyzer:
                 if os.path.exists(cand_path):
                     try:
                         d_img = Image.open(cand_path)
-                        d_arr = np.array(d_img, dtype=np.float32)
+                        d_arr = np.array(d_img)
                         if len(d_arr.shape) == 3:
                             d_arr = d_arr[:, :, 0]
-                        has_depth = True
-                        depth_array = d_arr
-                        depth_source = f'Associated Depth File ({os.path.basename(cand_path)})'
-                        break
+                        if d_arr.dtype == np.uint16:
+                            has_depth = True
+                            depth_array = d_arr.astype(np.float32) / 1000.0
+                            depth_source = f'Associated uint16 depth in millimeters ({os.path.basename(cand_path)})'
+                            break
+                        unverified_depth_source = os.path.basename(cand_path)
+                        unverified_preview = d_arr
                     except Exception:
                         pass
 
@@ -788,18 +802,38 @@ class ForensicAnalyzer:
                     'min_depth': round(min_depth, 3),
                     'max_depth': round(max_depth, 3),
                     'mean_depth': round(mean_depth, 3),
+                    'units': 'm',
                     'total_valid_pixels': valid_count,
                 },
                 'depth_heatmap': heatmap_b64,
             }
         else:
+            # Keep unscaled depth-like channels visible for inspection without
+            # treating them as meters or enabling metric pose estimation.
+            if unverified_preview is None and getattr(img, 'mode', '') == 'RGBA':
+                unverified_preview = np.array(img)[:, :, 3]
+                unverified_depth_source = unverified_depth_source or 'Embedded alpha channel (unscaled)'
+            preview_heatmap = None
+            if unverified_preview is not None:
+                preview_arr = np.asarray(unverified_preview).astype(np.float32)
+                finite = np.isfinite(preview_arr)
+                if np.any(finite):
+                    low, high = float(np.min(preview_arr[finite])), float(np.max(preview_arr[finite]))
+                    preview_heatmap = self._render_depth_heatmap(
+                        preview_arr, finite & (preview_arr > 0), low, high
+                    )
             return {
                 'is_rgbd': False,
-                'status': 'REJECTED_NOT_RGBD',
-                'reason': 'Standard 2D RGB Image detected. No depth channel or associated depth map file found.',
-                'source': 'None',
+                'status': 'DEPTH_SCALE_UNVERIFIED' if unverified_depth_source else 'REJECTED_NOT_RGBD',
+                'reason': (
+                    f"Depth file {unverified_depth_source} was not uint16 millimeter data; its values were not treated as meters."
+                    if unverified_depth_source else
+                    'Standard color image detected. No depth channel found. Provide a uint16 depth map in millimeters or RGBA depth for pose estimation.'
+                ),
+                'source': unverified_depth_source or 'None',
+                'has_depth_preview': preview_heatmap is not None,
                 'depth_stats': None,
-                'depth_heatmap': None,
+                'depth_heatmap': preview_heatmap,
             }
 
     def _render_depth_heatmap(self, depth_arr, valid_mask, min_d, max_d):

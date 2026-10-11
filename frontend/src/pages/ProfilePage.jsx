@@ -74,12 +74,12 @@ export default function ProfilePage({ user, onLogout }) {
         <p>Manage your account, 2FA, and active sessions</p>
       </div>
       <div className="page-body">
-        {message && <div className="alert alert-success">✓ {message}</div>}
+        {message && <div className="alert alert-success"> {message}</div>}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+        <div className="profile-columns" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
           {/* Profile Info */}
           <div className="card">
-            <h4 style={{ marginBottom: '1.25rem' }}>👤 Profile Information</h4>
+            <h4 style={{ marginBottom: '1.25rem' }}> Profile Information</h4>
             <div className="form-group">
               <label className="form-label">Full Name</label>
               <input className="form-input" type="text" value={editName}
@@ -97,14 +97,14 @@ export default function ProfilePage({ user, onLogout }) {
             </div>
             <div style={{ display: 'flex', gap: '0.75rem' }}>
               <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
-                {saving ? 'Saving...' : '💾 Save Changes'}
+                {saving ? 'Saving...' : ' Save Changes'}
               </button>
             </div>
           </div>
 
           {/* Security */}
           <div className="card">
-            <h4 style={{ marginBottom: '1.25rem' }}>🛡️ Security</h4>
+            <h4 style={{ marginBottom: '1.25rem' }}>️ Security</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)' }}>
                 <div>
@@ -112,7 +112,7 @@ export default function ProfilePage({ user, onLogout }) {
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>TOTP-based 2FA via authenticator app</p>
                 </div>
                 <span className={`badge ${profile?.is_2fa_enabled ? 'badge-success' : 'badge-warning'}`}>
-                  {profile?.is_2fa_enabled ? '🛡️ Enabled' : '⚠ Disabled'}
+                  {profile?.is_2fa_enabled ? '️ Enabled' : ' Disabled'}
                 </span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)' }}>
@@ -133,7 +133,7 @@ export default function ProfilePage({ user, onLogout }) {
               </div>
             </div>
             <button className="btn btn-danger btn-sm" style={{ marginTop: '1.25rem' }} onClick={handleLogout}>
-              🚪 Sign Out
+               Sign Out
             </button>
           </div>
         </div>
@@ -141,7 +141,7 @@ export default function ProfilePage({ user, onLogout }) {
         {/* Active Sessions */}
         <div className="card" style={{ marginTop: '1.5rem' }}>
           <div className="card-header">
-            <h4 className="card-title">🖥️ Active Sessions</h4>
+            <h4 className="card-title">️ Active Sessions</h4>
             <span className="badge badge-info">{sessions.length} active</span>
           </div>
           {sessions.length === 0 ? (

@@ -47,10 +47,34 @@ def create_app(config_name=None):
     def health_check():
         return {'status': 'ok', 'service': 'RGB-Pose Hub API', 'version': '2.0.0'}
 
-    # Create database tables
+    # Create database tables and seed default accounts
     with app.app_context():
         from module_auth.models import User, Session, ActivityLog, TwoFactorSecret
         db.create_all()
+        if User.query.count() == 0:
+            import bcrypt
+            pwd_hash = bcrypt.hashpw(b'Password123!', bcrypt.gensalt()).decode('utf-8')
+            default_user = User(
+                id='a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+                email='admin@rgbposehub.org',
+                username='admin',
+                password_hash=pwd_hash,
+                full_name='Administrator',
+                role='admin',
+                is_active=True,
+                is_2fa_enabled=False
+            )
+            lead = User(
+                email='lead_researcher@rgbposehub.org',
+                username='lead_researcher',
+                password_hash=pwd_hash,
+                full_name='Lead Researcher',
+                role='admin',
+                is_active=True,
+                is_2fa_enabled=False
+            )
+            db.session.add_all([default_user, lead])
+            db.session.commit()
 
     return app
 

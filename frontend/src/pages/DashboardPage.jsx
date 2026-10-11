@@ -45,11 +45,11 @@ export default function DashboardPage() {
   };
 
   const actionIcons = {
-    login_success: '🔐', logout: '👋', register: '🆕', image_upload: '📤',
-    image_analysis: '🔬', dataset_download_start: '📥', dataset_download_complete: '✅',
-    dataset_clean: '🧹', dataset_preprocess: '⚙️', model_build: '🏗️',
-    training_start: '🚀', training_complete: '🏆', profile_update: '👤',
-    '2fa_setup_complete': '🛡️', dataset_analysis: '🔍',
+    login_success: '', logout: '', register: '🆕', image_upload: '',
+    image_analysis: '', dataset_download_start: '', dataset_download_complete: '',
+    dataset_clean: '', dataset_preprocess: '️', model_build: '️',
+    training_start: '', training_complete: '', profile_update: '',
+    '2fa_setup_complete': '️', dataset_analysis: '',
   };
 
   if (loading) {
@@ -66,28 +66,28 @@ export default function DashboardPage() {
         {/* Stats Grid */}
         <div className="stats-grid" style={{ marginBottom: '1.5rem' }}>
           <div className="stat-card">
-            <div className="stat-icon blue">🔬</div>
+            <div className="stat-icon blue"></div>
             <div className="stat-info">
               <h4>{stats?.total_analyses || 0}</h4>
               <p>Total Analyses</p>
             </div>
           </div>
           <div className="stat-card">
-            <div className="stat-icon emerald">📤</div>
+            <div className="stat-icon emerald"></div>
             <div className="stat-info">
               <h4>{stats?.total_uploads || 0}</h4>
               <p>Images Uploaded</p>
             </div>
           </div>
           <div className="stat-card">
-            <div className="stat-icon amber">🗂️</div>
+            <div className="stat-icon amber"></div>
             <div className="stat-info">
               <h4>{datasetStatus?.total_images || 0}</h4>
               <p>Dataset Objects</p>
             </div>
           </div>
           <div className="stat-card">
-            <div className="stat-icon purple">🔐</div>
+            <div className="stat-icon purple"></div>
             <div className="stat-info">
               <h4>{stats?.active_sessions || 0}</h4>
               <p>Active Sessions</p>
@@ -99,7 +99,7 @@ export default function DashboardPage() {
           {/* Recent Activity */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">📋 Recent Activity</h3>
+              <h3 className="card-title"> Recent Activity</h3>
             </div>
             {recentActivity.length === 0 ? (
               <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No activity yet. Start by uploading an image!</p>
@@ -109,7 +109,7 @@ export default function DashboardPage() {
                   <div className="activity-item" key={item.id}>
                     <div className={`activity-dot ${item.category}`} />
                     <div>
-                      <p>{actionIcons[item.action] || '📌'} {item.description || item.action.replace(/_/g, ' ')}</p>
+                      <p>{actionIcons[item.action] || ''} {item.description || item.action.replace(/_/g, ' ')}</p>
                       <span className="activity-time">{formatTime(item.created_at)}</span>
                     </div>
                   </div>
@@ -121,19 +121,19 @@ export default function DashboardPage() {
           {/* System Status */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">⚡ System Status</h3>
+              <h3 className="card-title"> System Status</h3>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0', borderBottom: '1px solid var(--border-color)' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>Dataset</span>
                 <span className={`badge ${datasetStatus?.status === 'ready' ? 'badge-success' : 'badge-warning'}`}>
-                  {datasetStatus?.status === 'ready' ? `✓ ${datasetStatus.total_images} objects` : '○ Not loaded'}
+                  {datasetStatus?.status === 'ready' ? ` ${datasetStatus.total_images} objects` : '○ Not loaded'}
                 </span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0', borderBottom: '1px solid var(--border-color)' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>ML Model</span>
                 <span className={`badge ${modelStatus?.model?.model_exists ? 'badge-success' : 'badge-info'}`}>
-                  {modelStatus?.model?.model_exists ? '✓ Trained' : '○ Similarity mode'}
+                  {modelStatus?.model?.model_exists ? ' Trained' : '○ Similarity mode'}
                 </span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0', borderBottom: '1px solid var(--border-color)' }}>

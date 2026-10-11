@@ -4,7 +4,7 @@ import PointCloudViewer3D from '../components/PointCloudViewer3D';
 
 export default function AnalysisPage() {
   const [tab, setTab] = useState('upload'); // upload | catalog
-  const [sherloqCategory, setSherloqCategory] = useState('gatekeeper'); 
+  const [sherloqCategory, setSherloqCategory] = useState('gatekeeper');
   // gatekeeper | general | metadata | inspection | colors | detail | noise | jpeg
 
   // Inspection Tool Controls
@@ -19,11 +19,11 @@ export default function AnalysisPage() {
   const [depthPreview, setDepthPreview] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedDepthFile, setSelectedDepthFile] = useState(null);
-  const [autoDepth, setAutoDepth] = useState(false);
   const [loading, setLoading] = useState(false);
   const [poseLoading, setPoseLoading] = useState(false);
   const [error, setError] = useState('');
   const [poseTrackTab, setPoseTrackTab] = useState('dual'); // dual | track_a | track_b
+  const poseResultsRef = useRef(null);
 
   // Sample RGB-D State
   const [samples, setSamples] = useState([]);
@@ -32,6 +32,9 @@ export default function AnalysisPage() {
   const [forensics, setForensics] = useState(null);
   const [poseResults, setPoseResults] = useState(null);
   const [currentFilename, setCurrentFilename] = useState(null);
+  const [originalFilename, setOriginalFilename] = useState(null);
+  const [currentDepthFilename, setCurrentDepthFilename] = useState(null);
+  const [currentImageFormat, setCurrentImageFormat] = useState(null);
 
   // Multi-Object Pinpointing & Candidate State
   const [candidateObjects, setCandidateObjects] = useState([]);
@@ -91,6 +94,8 @@ export default function AnalysisPage() {
     }
     setError('');
     setSelectedFile(file);
+    setSelectedDepthFile(null);
+    setDepthPreview(null);
     const name = (file.name || '').toLowerCase();
     const isPdf = name.endsWith('.pdf') || file.type === 'application/pdf';
 
@@ -104,14 +109,18 @@ export default function AnalysisPage() {
   };
 
   const handleSelectDepthFile = (file) => {
-    if (!isValidMediaFile(file)) {
-      setError('Please select a valid depth map file (PNG, JPG, TIFF, PDF)');
+    if (!file) return;
+    const name = (file?.name || '').toLowerCase();
+    const type = (file?.type || '').toLowerCase();
+    const validExts = ['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.npy', '.pdf'];
+    const hasValidExt = validExts.some((ext) => name.endsWith(ext));
+    const hasValidType = type.startsWith('image/') || type === 'application/pdf' || type === '';
+    if (!hasValidExt && !hasValidType) {
+      setError('Please select a valid depth map file (JPG, JPEG, PNG, TIFF).');
       return;
     }
     setError('');
     setSelectedDepthFile(file);
-    setAutoDepth(false);
-    const name = (file.name || '').toLowerCase();
     const isPdf = name.endsWith('.pdf') || file.type === 'application/pdf';
     if (isPdf) {
       setDepthPreview('pdf-document');
@@ -149,11 +158,13 @@ export default function AnalysisPage() {
       const formData = new FormData();
       formData.append('image', imageFile);
       if (depth) formData.append('depth_image', depth);
-      if (autoDepth && !depth) formData.append('auto_depth', 'true');
 
       const res = await mlAPI.forensicAnalyze(formData);
       setForensics(res.data.forensics);
       setCurrentFilename(res.data.filename);
+      setOriginalFilename(res.data.original_filename || imageFile.name);
+      setCurrentImageFormat(res.data.image_format || null);
+      setCurrentDepthFilename(res.data.depth_filename || null);
       const objs = res.data.candidate_objects || [];
       setCandidateObjects(objs);
       if (objs.length > 0) {
@@ -178,11 +189,15 @@ export default function AnalysisPage() {
     setError('');
     setForensics(null);
     setPoseResults(null);
+    setCurrentDepthFilename(null);
     setTab('upload');
     try {
       const res = await mlAPI.forensicAnalyzeJson({ filename });
       setForensics(res.data.forensics);
       setCurrentFilename(filename);
+      setOriginalFilename(res.data.original_filename || filename);
+      setCurrentImageFormat(res.data.image_format || null);
+      setCurrentDepthFilename(res.data.depth_filename || null);
       const objs = res.data.candidate_objects || [];
       setCandidateObjects(objs);
       if (objs.length > 0) {
@@ -244,14 +259,18 @@ export default function AnalysisPage() {
   };
 
   const runPoseForTarget = async (obj = selectedObject, targetPoint = clickTarget) => {
-    if (!currentFilename || !forensics?.rgbd_gatekeeper?.is_rgbd) return;
+    if (!currentFilename) return;
+    // Allow pose with either verified RGB-D or depth preview (user uploaded a depth map)
+    const gk = forensics?.rgbd_gatekeeper;
+    if (!gk?.is_rgbd && !gk?.has_depth_preview && !currentDepthFilename) return;
 
     setPoseLoading(true);
     setError('');
     try {
       const res = await mlAPI.estimatePose({
         filename: currentFilename,
-        depth_stats: forensics.rgbd_gatekeeper.depth_stats,
+        depth_filename: currentDepthFilename,
+        depth_stats: forensics?.rgbd_gatekeeper?.depth_stats,
         track: 'both',
         target_point: targetPoint || (obj?.center_norm ? { x_norm: obj.center_norm.x, y_norm: obj.center_norm.y } : undefined),
         bounding_box: obj?.bbox,
@@ -262,8 +281,24 @@ export default function AnalysisPage() {
         setCandidateObjects(res.data.pose_result.candidate_objects);
       }
       setPoseTrackTab('dual');
+      // Scroll pose results into view
+      setTimeout(() => poseResultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     } catch (err) {
-      setError(err.response?.data?.error || 'Pose estimation failed');
+      const poseResult = err.response?.data?.pose_result;
+      if (poseResult) {
+        setPoseResults(poseResult);
+        if (poseResult.candidate_objects?.length > 0) {
+          setCandidateObjects(poseResult.candidate_objects);
+        }
+        setPoseTrackTab('dual');
+        setTimeout(() => poseResultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+      }
+      const trackReasons = [
+        poseResult?.track_a?.error && `Track A: ${poseResult.track_a.error}`,
+        poseResult?.track_b?.error && `Track B: ${poseResult.track_b.error}`,
+      ].filter(Boolean);
+      const explanation = trackReasons.length ? ` ${trackReasons.join(' ')}` : '';
+      setError(`${err.response?.data?.error || 'Pose estimation failed'}${explanation}`);
     } finally {
       setPoseLoading(false);
     }
@@ -280,12 +315,198 @@ export default function AnalysisPage() {
     setDepthPreview(null);
     setSelectedFile(null);
     setSelectedDepthFile(null);
-    setAutoDepth(false);
     setCurrentFilename(null);
+    setCurrentDepthFilename(null);
     setCandidateObjects([]);
     setSelectedObject(null);
     setClickTarget(null);
     setError('');
+  };
+
+  const handleExportCSV = () => {
+    if (!forensics) return;
+    const rows = [
+      ['RGB-Pose Hub Forensic & 6D Pose Inspection Report'],
+      ['Generated At', new Date().toISOString()],
+      ['Image Filename', originalFilename || 'N/A'],
+      ['Detected Format', currentImageFormat || forensics.metadata?.format || 'N/A'],
+      ['Dimensions', forensics.metadata?.dimensions || 'N/A'],
+      ['Megapixels', forensics.metadata?.megapixels || 'N/A'],
+      ['File Size', forensics.metadata?.file_size_formatted || 'N/A'],
+      ['Color Mode', forensics.metadata?.color_mode || 'N/A'],
+      ['Bit Depth', forensics.metadata?.bit_depth || 'N/A'],
+      ['SHA-256 Digest', forensics.metadata?.sha256_hash || 'N/A'],
+      [],
+      ['--- RGB-D Gatekeeper & Depth Metrics ---'],
+      ['Is Metric RGB-D', gatekeeper?.is_rgbd ? 'Yes' : 'No'],
+      ['Gatekeeper Status', gatekeeper?.status || 'N/A'],
+      ['Gatekeeper Reason', `"${(gatekeeper?.reason || '').replace(/"/g, '""')}"`],
+      ['Depth Coverage (%)', gatekeeper?.depth_stats?.coverage_pct ?? 'N/A'],
+      ['Min Depth (m)', gatekeeper?.depth_stats?.min_depth ?? 'N/A'],
+      ['Mean Depth (m)', gatekeeper?.depth_stats?.mean_depth ?? 'N/A'],
+      ['Max Depth (m)', gatekeeper?.depth_stats?.max_depth ?? 'N/A'],
+      [],
+      ['--- Forensics Tampering Assessment ---'],
+      ['Tampering Assessment', forensics.jpeg_info?.tampering_assessment || 'N/A'],
+      ['JPEG Quality', forensics.jpeg_info?.estimated_quality ?? 'N/A'],
+      ['JPEG Compression Type', forensics.jpeg_info?.compression_type || 'N/A'],
+      ['ELA Max Difference', forensics.tamper_assessment?.ela_max_diff ?? 'N/A'],
+      ['ELA Anomaly Score', forensics.tamper_assessment?.ela_anomaly_score ?? 'N/A'],
+      ['Clone Detection Result', forensics.tamper_assessment?.clone_verdict || 'N/A'],
+      [],
+      ['--- Detected Candidate Objects ---'],
+      ['Object ID', 'Label', 'Confidence/Depth', 'Bounding Box (x1,y1,x2,y2)'],
+      ...(candidateObjects.length ? candidateObjects.map((o, idx) => [
+        o.id || `obj_${idx + 1}`,
+        `"${(o.label || '').replace(/"/g, '""')}"`,
+        `${o.depth_m || 'N/A'} m`,
+        o.bbox_norm ? `"[${o.bbox_norm.map(n => n.toFixed(3)).join(', ')}]"` : 'N/A'
+      ]) : [['None detected']]),
+      [],
+      ['--- 6D Pose Estimation Results ---'],
+      ['Selected Object', selectedObject?.label || (clickTarget ? `Pinpoint (${clickTarget.px_x}, ${clickTarget.px_y})` : 'None')],
+      ['Solver Track', poseResults ? (poseTrackTab === 'dual' ? 'Dual Comparison' : poseTrackTab) : 'Not executed'],
+      ['Track A Object', poseResults?.track_a?.object_name || 'N/A'],
+      ['Track A Classification Confidence (%)', poseResults?.track_a?.classification_confidence_pct ?? 'N/A'],
+      ['Track A Translation Vector (m)', `"${poseResults?.track_a?.translation_vector_m?.formatted || 'N/A'}"`],
+      ['Track A Euler Rotation (deg)', `"${poseResults?.track_a?.rotation_euler_deg?.formatted || 'N/A'}"`],
+      ['Track A Quaternion', `"${poseResults?.track_a?.rotation_quaternion?.formatted || 'N/A'}"`],
+      ['Track A 3D Box (L x W x H m)', poseResults?.track_a?.bounding_box_3d ? `${poseResults.track_a.bounding_box_3d.length_m} x ${poseResults.track_a.bounding_box_3d.width_m} x ${poseResults.track_a.bounding_box_3d.height_m}` : 'N/A'],
+      ['Track B Solver', poseResults?.track_b?.solver || 'N/A'],
+      ['Track B Inlier Ratio (%)', poseResults?.track_b?.pnp_metrics?.inlier_ratio_pct ?? 'N/A'],
+      ['Track B Reprojection Error (px)', poseResults?.track_b?.pnp_metrics?.mean_reprojection_error_px ?? 'N/A'],
+      ['Track B Translation Vector (m)', `"${poseResults?.track_b?.translation_vector_m?.formatted || 'N/A'}"`],
+    ];
+
+    const csvContent = '\uFEFF' + rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `RGBPoseHub_Report_${(originalFilename || 'analysis').replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportPDF = () => {
+    if (!forensics) return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Please allow popups to generate the PDF report.');
+      return;
+    }
+
+    const title = 'RGB-Pose Hub Forensic & 6D Pose Report';
+    const reportHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${title}</title>
+  <style>
+    @page { size: A4 portrait; margin: 15mm; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1e293b; line-height: 1.4; margin: 0; padding: 20px; font-size: 11pt; }
+    .header { border-bottom: 2px solid #0284c7; padding-bottom: 12px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: flex-end; }
+    .header h1 { margin: 0; font-size: 18pt; color: #0f172a; }
+    .header .meta { font-size: 9pt; color: #64748b; text-align: right; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 8pt; text-transform: uppercase; }
+    .badge-success { background: #dcfce7; color: #15803d; }
+    .badge-warning { background: #fef3c7; color: #b45309; }
+    .badge-info { background: #e0f2fe; color: #0369a1; }
+    .section-title { font-size: 12pt; font-weight: bold; margin: 18px 0 8px; color: #0369a1; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 9.5pt; }
+    th, td { border: 1px solid #cbd5e1; padding: 6px 10px; text-align: left; }
+    th { background: #f8fafc; font-weight: 600; color: #334155; }
+    .grid-2 { display: flex; gap: 14px; margin-bottom: 14px; }
+    .grid-2 > div { flex: 1; }
+    .image-preview { width: 100%; max-height: 220px; object-fit: contain; border-radius: 6px; border: 1px solid #cbd5e1; background: #000; display: block; }
+    .footer { margin-top: 25px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 8pt; color: #94a3b8; display: flex; justify-content: space-between; }
+    @media print {
+      body { padding: 0; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>RGB-Pose Hub Forensic & 6D Pose Report</h1>
+      <div style="font-size: 9.5pt; color: #475569; margin-top: 3px;">
+        File: <strong>${originalFilename || 'Analysis Sample'}</strong> &bull; Detected Format: <strong>${currentImageFormat || forensics.metadata?.format || 'Unknown'}</strong>
+      </div>
+    </div>
+    <div class="meta">
+      <div>Report ID: #${Math.random().toString(36).substring(2, 9).toUpperCase()}</div>
+      <div>Date: ${new Date().toLocaleString()}</div>
+      <div style="margin-top: 4px;"><span class="badge ${gatekeeper?.is_rgbd ? 'badge-success' : 'badge-warning'}">${gatekeeper?.is_rgbd ? 'VERIFIED RGB-D' : 'STANDARD 2D / HEATMAP'}</span></div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div>
+      <div style="font-weight: 600; font-size: 9pt; margin-bottom: 4px;">Original RGB Input</div>
+      ${preview ? `<img class="image-preview" src="${preview}" alt="RGB Preview" />` : '<div style="height:120px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#64748b;">No Image</div>'}
+    </div>
+    <div>
+      <div style="font-weight: 600; font-size: 9pt; margin-bottom: 4px;">Depth Map Heatmap</div>
+      ${gatekeeper?.depth_heatmap ? `<img class="image-preview" src="data:image/png;base64,${gatekeeper.depth_heatmap}" alt="Depth Heatmap" />` : '<div style="height:120px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#64748b;">Depth Heatmap Unavailable</div>'}
+    </div>
+  </div>
+
+  <div class="section-title">1. File Digest & Integrity Verification</div>
+  <table>
+    <tr><th style="width:25%">Dimensions</th><td>${forensics.metadata?.dimensions || 'N/A'} (${forensics.metadata?.megapixels || 'N/A'} MP)</td><th style="width:25%">Color Profile</th><td>${forensics.metadata?.color_mode || 'N/A'} (${forensics.metadata?.channels || 'N/A'} channels, ${forensics.metadata?.bit_depth || 'N/A'} bit)</td></tr>
+    <tr><th>File Size</th><td>${forensics.metadata?.file_size_formatted || 'N/A'}</td><th>Tamper Verdict</th><td><span class="badge badge-info">${forensics.jpeg_info?.tampering_assessment || 'N/A'}</span></td></tr>
+    <tr><th>SHA-256 Digest</th><td colspan="3" style="font-family: monospace; font-size: 8pt; word-break: break-all;">${forensics.metadata?.sha256_hash || 'N/A'}</td></tr>
+    <tr><th>Depth Gatekeeper</th><td colspan="3">${gatekeeper?.reason || 'N/A'} ${gatekeeper?.depth_stats ? `(Range: ${gatekeeper.depth_stats.min_depth}m - ${gatekeeper.depth_stats.max_depth}m, Mean: ${gatekeeper.depth_stats.mean_depth}m, Coverage: ${gatekeeper.depth_stats.coverage_pct}%)` : ''}</td></tr>
+  </table>
+
+  ${candidateObjects.length ? `
+  <div class="section-title">2. Detected Candidate Objects (${candidateObjects.length})</div>
+  <table>
+    <thead><tr><th>#</th><th>Object Label</th><th>Est. Depth</th><th>Normalized Bounding Box</th></tr></thead>
+    <tbody>
+      ${candidateObjects.map((obj, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td><strong>${obj.label || 'Target'}</strong></td>
+          <td>${obj.depth_m || 'N/A'} m</td>
+          <td style="font-family:monospace;font-size:8.5pt;">${obj.bbox_norm ? `[${obj.bbox_norm.map(n => n.toFixed(3)).join(', ')}]` : 'N/A'}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+  ` : ''}
+
+  ${poseResults ? `
+  <div class="section-title">3. 6D Spatial Pose Estimation Workbench Results</div>
+  <table>
+    <tr><th style="width:25%">Target Object</th><td><strong>${poseResults.object_name || selectedObject?.label || 'Selected Object'}</strong></td><th style="width:25%">Dual Agreement</th><td>${poseResults.comparison?.agreement_status || 'N/A'} (Delta T: ${poseResults.comparison?.translation_delta_m != null ? (poseResults.comparison.translation_delta_m * 100).toFixed(1) + ' cm' : 'N/A'}, Delta R: ${poseResults.comparison?.rotation_delta_deg != null ? poseResults.comparison.rotation_delta_deg + '°' : 'N/A'})</td></tr>
+    <tr><th>Track A (EfficientPose)</th><td>Translation: <code>${poseResults.track_a?.translation_vector_m?.formatted || 'N/A'}</code><br/>Rotation: <code>${poseResults.track_a?.rotation_euler_deg?.formatted || 'N/A'}</code></td><th>Track A Box (L x W x H)</th><td>${poseResults.track_a?.bounding_box_3d ? `${poseResults.track_a.bounding_box_3d.length_m}m × ${poseResults.track_a.bounding_box_3d.width_m}m × ${poseResults.track_a.bounding_box_3d.height_m}m (${poseResults.track_a.bounding_box_3d.volume_cm3} cm³)` : 'N/A'}</td></tr>
+    <tr><th>Track B (PnP / Depth)</th><td colspan="3">Translation: <code>${poseResults.track_b?.translation_vector_m?.formatted || 'N/A'}</code> &bull; Reprojection Error: ${poseResults.track_b?.pnp_metrics?.mean_reprojection_error_px ?? 'N/A'} px &bull; Inliers: ${poseResults.track_b?.pnp_metrics?.inlier_count ?? 'N/A'}/${poseResults.track_b?.pnp_metrics?.total_correspondences ?? 'N/A'} (${poseResults.track_b?.pnp_metrics?.inlier_ratio_pct ?? 'N/A'}%)</td></tr>
+  </table>
+  ` : ''}
+
+  <div class="footer">
+    <span>RGB-Pose Hub &bull; 6D Object Pose Estimation & Image Forensics Platform</span>
+    <span>Generated by RGBPoseHub Client &bull; Page 1 of 1</span>
+  </div>
+
+  <script>
+    window.onload = function() {
+      setTimeout(function() {
+        window.print();
+      }, 400);
+    };
+  </script>
+</body>
+</html>
+    `;
+    printWindow.document.open();
+    printWindow.document.write(reportHtml);
+    printWindow.document.close();
   };
 
   const gatekeeper = forensics?.rgbd_gatekeeper;
@@ -321,12 +542,12 @@ export default function AnalysisPage() {
           <>
             {!forensics && !loading && (
               <>
-                {/* Two-Panel Upload: RGB Image + Depth Map */}
-                <div style={{ display: 'grid', gridTemplateColumns: selectedFile ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+                {/* Two-Panel Upload: RGB Image + Depth Map — always side by side */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   {/* Panel 1: Main RGB/RGBD Image */}
                   <div
                     className={`upload-zone ${dragover ? 'dragover' : ''}`}
-                    style={{ minHeight: selectedFile ? '180px' : '220px', position: 'relative' }}
+                    style={{ minHeight: '220px', position: 'relative' }}
                     onDragOver={(e) => { e.preventDefault(); setDragover(true); }}
                     onDragLeave={() => setDragover(false)}
                     onDrop={(e) => {
@@ -367,90 +588,75 @@ export default function AnalysisPage() {
                     />
                   </div>
 
-                  {/* Panel 2: Depth Map (visible after selecting RGB) */}
-                  {selectedFile && (
-                    <div
-                      className="upload-zone"
-                      style={{
-                        minHeight: '180px',
-                        borderColor: selectedDepthFile ? '#10b981' : autoDepth ? '#f59e0b' : 'var(--border)',
-                        background: selectedDepthFile ? 'rgba(16,185,129,0.05)' : autoDepth ? 'rgba(245,158,11,0.05)' : undefined,
-                        cursor: autoDepth ? 'default' : 'pointer',
+                  {/* Panel 2: Depth Map — always visible */}
+                  <div
+                    className="upload-zone"
+                    style={{
+                      minHeight: '220px',
+                      borderStyle: 'dashed',
+                      borderColor: selectedDepthFile ? '#10b981' : 'var(--border)',
+                      background: selectedDepthFile ? 'rgba(16,185,129,0.05)' : 'rgba(255,255,255,0.02)',
+                      cursor: 'pointer',
+                    }}
+                    onDragOver={(e) => { e.preventDefault(); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (e.dataTransfer.files[0]) handleSelectDepthFile(e.dataTransfer.files[0]);
+                    }}
+                    onClick={() => depthInputRef.current?.click()}
+                  >
+                    {selectedDepthFile ? (
+                      <div style={{ textAlign: 'center' }}>
+                        {depthPreview === 'pdf-document' ? (
+                          <div style={{ padding: '0.5rem', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '6px', border: '1px solid #3b82f6', display: 'inline-block', marginBottom: '0.5rem' }}>
+                            <div style={{ fontSize: '2rem' }}>📄</div>
+                            <span style={{ fontSize: '0.75rem', color: '#3b82f6', fontWeight: 600 }}>PDF Depth Map</span>
+                          </div>
+                        ) : depthPreview ? (
+                          <img src={depthPreview} alt="Depth" style={{ maxHeight: '120px', borderRadius: '8px', marginBottom: '0.5rem', filter: 'grayscale(1) contrast(1.5)' }} />
+                        ) : null}
+                        <p style={{ fontSize: '0.85rem', color: '#10b981', margin: 0 }}>✓ Depth: {selectedDepthFile.name}</p>
+                        <button
+                          className="btn btn-sm" style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#ef4444' }}
+                          onClick={(e) => { e.stopPropagation(); setSelectedDepthFile(null); setDepthPreview(null); }}
+                        >✕ Remove</button>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: '2rem', marginBottom: '0.5rem', opacity: 0.6 }}>📏</div>
+                        <p style={{ margin: '0 0 0.35rem' }}><strong>Drop depth map here</strong> (optional)</p>
+                        <p className="upload-hint">Depth map: JPG, PNG, or uint16 TIFF (0.3m – 3.0m metric)</p>
+                      </>
+                    )}
+                    <input
+                      ref={depthInputRef}
+                      type="file"
+                      accept=".png,.jpg,.jpeg,.tif,.tiff,image/png,image/jpeg,image/tiff"
+                      hidden
+                      onChange={(e) => {
+                        if (e.target.files[0]) handleSelectDepthFile(e.target.files[0]);
+                        e.target.value = '';
                       }}
-                      onClick={() => { if (!autoDepth) depthInputRef.current?.click(); }}
-                    >
-                      {selectedDepthFile ? (
-                        <div style={{ textAlign: 'center' }}>
-                          {depthPreview === 'pdf-document' ? (
-                            <div style={{ padding: '0.5rem', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '6px', border: '1px solid #3b82f6', display: 'inline-block', marginBottom: '0.5rem' }}>
-                              <div style={{ fontSize: '2rem' }}>📄</div>
-                              <span style={{ fontSize: '0.75rem', color: '#3b82f6', fontWeight: 600 }}>PDF Depth Map</span>
-                            </div>
-                          ) : depthPreview ? (
-                            <img src={depthPreview} alt="Depth" style={{ maxHeight: '100px', borderRadius: '8px', marginBottom: '0.5rem', filter: 'grayscale(1) contrast(1.5)' }} />
-                          ) : null}
-                          <p style={{ fontSize: '0.85rem', color: '#10b981', margin: 0 }}>✓ Depth: {selectedDepthFile.name}</p>
-                          <button
-                            className="btn btn-sm" style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#ef4444' }}
-                            onClick={(e) => { e.stopPropagation(); setSelectedDepthFile(null); setDepthPreview(null); }}
-                          >✕ Remove</button>
-                        </div>
-                      ) : autoDepth ? (
-                        <div style={{ textAlign: 'center' }}>
-                          <div style={{ fontSize: '2rem', marginBottom: '0.25rem' }}>🤖</div>
-                          <p style={{ fontSize: '0.9rem', color: '#f59e0b', margin: '0 0 0.25rem' }}><strong>Auto-Depth Enabled</strong></p>
-                          <p className="upload-hint">Depth will be estimated from image content using edge detection &amp; saliency analysis</p>
-                        </div>
-                      ) : (
-                        <>
-                          <div style={{ fontSize: '2rem', marginBottom: '0.25rem' }}>📏</div>
-                          <p><strong>Drop depth map here</strong> (optional)</p>
-                          <p className="upload-hint">Grayscale depth PNG/TIFF • 16-bit sensor PNG • Depth map image</p>
-                        </>
-                      )}
-                      <input
-                        ref={depthInputRef}
-                        type="file"
-                        accept="image/*,.heic,.heif,.pdf,application/pdf"
-                        hidden
-                        onChange={(e) => {
-                          if (e.target.files[0]) handleSelectDepthFile(e.target.files[0]);
-                          e.target.value = '';
-                        }}
-                      />
-                    </div>
-                  )}
+                    />
+                  </div>
                 </div>
 
-                {/* Action Buttons: Auto-Depth toggle + Analyze button */}
-                {selectedFile && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '1rem', padding: '1rem', background: 'var(--code-bg)', borderRadius: '10px', border: '1px solid var(--border)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                      {!selectedDepthFile && (
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
-                          <input
-                            type="checkbox"
-                            checked={autoDepth}
-                            onChange={(e) => setAutoDepth(e.target.checked)}
-                            style={{ width: '16px', height: '16px', accentColor: '#f59e0b' }}
-                          />
-                          <span style={{ color: autoDepth ? '#f59e0b' : 'var(--text-secondary)' }}>🤖 Auto-Generate Depth from Image</span>
-                        </label>
-                      )}
-                      {!selectedDepthFile && !autoDepth && (
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                          Upload a depth file or enable auto-depth for 6D pose estimation
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      className="btn btn-primary"
-                      onClick={() => handleForensicAnalysis()}
-                    >
-                      🔬 Run Forensic Analysis{(selectedDepthFile || autoDepth) ? ' + Depth' : ''}
-                    </button>
-                  </div>
-                )}
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: '1rem', padding: '1rem', background: 'var(--code-bg)', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                  {!selectedFile && (
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginRight: 'auto' }}>
+                      ⬆ Upload an RGB image on the left to begin. Depth map (right) is optional.
+                    </span>
+                  )}
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => handleForensicAnalysis()}
+                    disabled={!selectedFile}
+                    style={{ opacity: selectedFile ? 1 : 0.45, cursor: selectedFile ? 'pointer' : 'not-allowed' }}
+                  >
+                    🔬 Run Forensic Analysis{selectedDepthFile ? ' + Depth' : ''}
+                  </button>
+                </div>
 
                 {/* Quick Educational Guide: What is Depth Map? */}
                 <div style={{ marginTop: '1rem', padding: '1rem 1.25rem', background: 'rgba(59, 130, 246, 0.05)', borderRadius: '10px', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
@@ -469,7 +675,7 @@ export default function AnalysisPage() {
                     </div>
                     <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '0.6rem 0.8rem', borderRadius: '6px' }}>
                       <strong style={{ color: '#f8fafc', display: 'block', marginBottom: '0.2rem' }}>3. Standard 2D Photos (No Sensor)</strong>
-                      If you only have a normal 2D photo, just check <strong>"🤖 Auto-Generate Depth"</strong> above and AI will synthesize the 3D depth automatically.
+                      A normal 2D photo has no measured distance data. It can be inspected as RGB, but 6D pose needs a separate uint16 PNG/TIFF depth map measured in millimeters.
                     </div>
                   </div>
                 </div>
@@ -477,10 +683,10 @@ export default function AnalysisPage() {
                 {/* Sample RGB-D Test Images Section */}
                 <div style={{ marginTop: '1.5rem', padding: '1.25rem', background: 'var(--code-bg)', borderRadius: '12px', border: '1px solid var(--border)' }}>
                   <h4 style={{ margin: '0 0 0.5rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span>🧪</span> Try Sample Verified RGB-D Images (1-Click Test)
+                    <span>🧪</span> Try Sample RGB-D Images (1-Click Test)
                   </h4>
                   <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                    Click any sample below to load a pre-generated 4-channel RGB-D image and verify depth gatekeeper + 6D pose estimation:
+                    Click a sample to load its RGB image and paired uint16 depth map (millimeters) for the depth gatekeeper and pose flow:
                   </p>
 
                   <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -509,11 +715,29 @@ export default function AnalysisPage() {
             {/* Forensics Analysis Workbench */}
             {forensics && (
               <div className="slide-up">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                  <h3>Part 1: Sherloq Multi-Category Forensic Workbench</h3>
-                  <button className="btn btn-secondary btn-sm" onClick={resetAnalysis}>
-                    🔄 New Inspection
-                  </button>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+                  <h3 style={{ margin: 0 }}>Part 1: Sherloq Multi-Category Forensic Workbench</h3>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={handleExportCSV}
+                      title="Download full forensic metrics & pose vectors as CSV"
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    >
+                      📊 Export CSV
+                    </button>
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={handleExportPDF}
+                      title="Generate and print/save formatted PDF laboratory report"
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    >
+                      📄 Download PDF Report
+                    </button>
+                    <button className="btn btn-secondary btn-sm" onClick={resetAnalysis}>
+                      🔄 New Inspection
+                    </button>
+                  </div>
                 </div>
 
                 {/* Gatekeeper Banner */}
@@ -522,15 +746,15 @@ export default function AnalysisPage() {
                     padding: '1.25rem',
                     borderRadius: '12px',
                     marginBottom: '1.5rem',
-                    background: gatekeeper?.is_rgbd ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                    border: `1.5px solid ${gatekeeper?.is_rgbd ? '#10b981' : '#ef4444'}`,
+                    background: gatekeeper?.is_rgbd ? 'rgba(16, 185, 129, 0.12)' : gatekeeper?.has_depth_preview ? 'rgba(245, 158, 11, 0.10)' : 'rgba(239, 68, 68, 0.12)',
+                    border: `1.5px solid ${gatekeeper?.is_rgbd ? '#10b981' : gatekeeper?.has_depth_preview ? '#f59e0b' : '#ef4444'}`,
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.4rem' }}>
-                        <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: gatekeeper?.is_rgbd ? '#10b981' : '#ef4444' }}>
-                          {gatekeeper?.is_rgbd ? '✅ VERIFIED RGB-D IMAGE' : '❌ STOPPED AT GATEKEEPER: NOT AN RGB-D IMAGE'}
+                        <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: gatekeeper?.is_rgbd ? '#10b981' : gatekeeper?.has_depth_preview ? '#f59e0b' : '#ef4444' }}>
+                          {gatekeeper?.is_rgbd ? '✅ VERIFIED RGB-D IMAGE' : gatekeeper?.has_depth_preview ? '⚠️ DEPTH CHANNEL PREVIEW (UNSCALED)' : '❌ NO METRIC DEPTH MAP'}
                         </span>
                         <span className="badge" style={{ background: gatekeeper?.is_rgbd ? '#10b98122' : '#ef444422', color: gatekeeper?.is_rgbd ? '#10b981' : '#ef4444' }}>
                           {gatekeeper?.status}
@@ -549,7 +773,7 @@ export default function AnalysisPage() {
                     </div>
 
                     <div>
-                      {gatekeeper?.is_rgbd ? (
+                      {(gatekeeper?.is_rgbd || gatekeeper?.has_depth_preview || currentDepthFilename) ? (
                         <button className="btn btn-primary" onClick={proceedToPoseEstimation} disabled={poseLoading} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                           <span>{poseLoading ? '⏳ Computing 6D Pose...' : '🎯 Estimate 6D Pose'}</span>
                           {selectedObject && (
@@ -606,11 +830,26 @@ export default function AnalysisPage() {
                   <div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem' }}>
                       <div className="card">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                          <h4 style={{ margin: 0 }}>Original RGB Input (Click Object to Pinpoint 🎯)</h4>
-                          <span className="badge badge-info" style={{ fontSize: '0.75rem' }}>Interactive Target Selector</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                          <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                            Original RGB Input <span style={{ fontSize: '0.8rem', fontWeight: 400, color: 'var(--text-secondary)' }}>(Click Object to Pinpoint 🎯)</span>
+                          </h4>
+                          <span
+                            className="badge badge-info"
+                            style={{
+                              fontSize: '0.75rem',
+                              maxWidth: '280px',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0
+                            }}
+                            title={currentImageFormat ? `Uploaded: ${originalFilename} • Detected: ${currentImageFormat}` : 'Interactive Target Selector'}
+                          >
+                            {currentImageFormat ? `Uploaded: ${originalFilename} • Detected: ${currentImageFormat}` : 'Interactive Target Selector'}
+                          </span>
                         </div>
-                        
+
                         {/* Interactive Image Container with Bounding Boxes and Reticle */}
                         <div
                           style={{
@@ -770,20 +1009,15 @@ export default function AnalysisPage() {
                       </div>
 
                       <div className="card">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <h4>Depth Map Visualization (Inferno Heatmap)</h4>
-                          <span className="badge badge-success">0.4m – 2.0m Scale</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                          <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>Depth Map Visualization (Inferno Heatmap)</h4>
+                          <span className="badge" style={{ fontSize: '0.75rem' }}>{gatekeeper?.is_rgbd ? 'Metric depth (meters)' : 'Visualization only • scale unknown'}</span>
                         </div>
                         {gatekeeper?.depth_heatmap ? (
                           <div style={{ marginTop: '0.5rem' }}>
                             <img src={`data:image/png;base64,${gatekeeper.depth_heatmap}`} alt="Depth Heatmap" style={{ width: '100%', borderRadius: '8px' }} />
-                            {/* Color bar scale */}
-                            <div style={{ marginTop: '0.5rem', height: '12px', background: 'linear-gradient(to right, #000000, #ff0000, #ffaa00, #ffff00)', borderRadius: '6px' }} />
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                              <span>Close (0.4m)</span>
-                              <span>Mid (1.2m)</span>
-                              <span>Far (2.0m+)</span>
-                            </div>
+                            {gatekeeper?.is_rgbd && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}><span>{gatekeeper.depth_stats.min_depth} m</span><span>{gatekeeper.depth_stats.mean_depth} m mean</span><span>{gatekeeper.depth_stats.max_depth} m</span></div>}
+                            {!gatekeeper?.is_rgbd && <p style={{ fontSize: '0.8rem', color: '#f59e0b' }}>This channel is shown for inspection only. Upload a uint16 depth map in millimeters to enable 6D pose.</p>}
                           </div>
                         ) : (
                           <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
@@ -1052,9 +1286,18 @@ export default function AnalysisPage() {
                   </div>
                 )}
 
+                {/* Part 2: 6D Pose Estimation Loading */}
+                {poseLoading && (
+                  <div style={{ marginTop: '2rem', padding: '2rem', textAlign: 'center', background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: '12px' }}>
+                    <div className="spinner" style={{ margin: '0 auto 1rem' }} />
+                    <p style={{ color: '#34d399', fontWeight: 600 }}>⚡ Running Dual-Track 6D Pose Estimation...</p>
+                    <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Track A: EfficientPose Neural Regression &amp; Track B: Geometric PnP+RANSAC</p>
+                  </div>
+                )}
+
                 {/* Part 2: 6D Pose Estimation Results */}
                 {poseResults && (
-                  <div style={{ marginTop: '2.5rem', borderTop: '2px solid rgba(16, 185, 129, 0.3)', paddingTop: '2rem' }}>
+                  <div ref={poseResultsRef} style={{ marginTop: '2.5rem', borderTop: '2px solid rgba(16, 185, 129, 0.3)', paddingTop: '2rem' }}>
                     {/* Startup Header Banner */}
                     <div style={{
                       display: 'flex',
@@ -1103,74 +1346,95 @@ export default function AnalysisPage() {
                         </div>
                       </div>
 
-                      {/* Track Selector Segmented Tabs */}
-                      <div style={{
-                        display: 'flex',
-                        background: 'rgba(15, 23, 42, 0.75)',
-                        padding: '0.3rem',
-                        borderRadius: '12px',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
-                        gap: '0.3rem',
-                      }}>
-                        <button
-                          onClick={() => setPoseTrackTab('dual')}
-                          style={{
-                            background: poseTrackTab === 'dual' ? 'linear-gradient(135deg, #3b82f6, #06b6d4)' : 'transparent',
-                            color: poseTrackTab === 'dual' ? '#ffffff' : '#94a3b8',
-                            border: 'none',
-                            padding: '0.5rem 1rem',
-                            borderRadius: '8px',
-                            fontSize: '0.82rem',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.4rem',
-                            transition: 'all 0.2s',
-                          }}
-                        >
-                          ⚡ Dual-Track Comparison
-                        </button>
+                      {/* Track Selector & Export Buttons */}
+                      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <div style={{
+                          display: 'flex',
+                          background: 'rgba(15, 23, 42, 0.75)',
+                          padding: '0.3rem',
+                          borderRadius: '12px',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          gap: '0.3rem',
+                        }}>
+                          <button
+                            onClick={() => setPoseTrackTab('dual')}
+                            style={{
+                              background: poseTrackTab === 'dual' ? 'linear-gradient(135deg, #3b82f6, #06b6d4)' : 'transparent',
+                              color: poseTrackTab === 'dual' ? '#ffffff' : '#94a3b8',
+                              border: 'none',
+                              padding: '0.5rem 1rem',
+                              borderRadius: '8px',
+                              fontSize: '0.82rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.4rem',
+                              transition: 'all 0.2s',
+                            }}
+                          >
+                            ⚡ Dual-Track Comparison
+                          </button>
 
-                        <button
-                          onClick={() => setPoseTrackTab('track_a')}
-                          style={{
-                            background: poseTrackTab === 'track_a' ? 'linear-gradient(135deg, #10b981, #059669)' : 'transparent',
-                            color: poseTrackTab === 'track_a' ? '#ffffff' : '#94a3b8',
-                            border: 'none',
-                            padding: '0.5rem 1rem',
-                            borderRadius: '8px',
-                            fontSize: '0.82rem',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.4rem',
-                            transition: 'all 0.2s',
-                          }}
-                        >
-                          🧠 Track A: EfficientPose
-                        </button>
+                          <button
+                            onClick={() => setPoseTrackTab('track_a')}
+                            style={{
+                              background: poseTrackTab === 'track_a' ? 'linear-gradient(135deg, #10b981, #059669)' : 'transparent',
+                              color: poseTrackTab === 'track_a' ? '#ffffff' : '#94a3b8',
+                              border: 'none',
+                              padding: '0.5rem 1rem',
+                              borderRadius: '8px',
+                              fontSize: '0.82rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.4rem',
+                              transition: 'all 0.2s',
+                            }}
+                          >
+                            🧠 Track A: EfficientPose
+                          </button>
 
-                        <button
-                          onClick={() => setPoseTrackTab('track_b')}
-                          style={{
-                            background: poseTrackTab === 'track_b' ? 'linear-gradient(135deg, #d946ef, #8b5cf6)' : 'transparent',
-                            color: poseTrackTab === 'track_b' ? '#ffffff' : '#94a3b8',
-                            border: 'none',
-                            padding: '0.5rem 1rem',
-                            borderRadius: '8px',
-                            fontSize: '0.82rem',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.4rem',
-                            transition: 'all 0.2s',
-                          }}
-                        >
-                          📐 Track B: Geometric PnP
-                        </button>
+                          <button
+                            onClick={() => setPoseTrackTab('track_b')}
+                            style={{
+                              background: poseTrackTab === 'track_b' ? 'linear-gradient(135deg, #d946ef, #8b5cf6)' : 'transparent',
+                              color: poseTrackTab === 'track_b' ? '#ffffff' : '#94a3b8',
+                              border: 'none',
+                              padding: '0.5rem 1rem',
+                              borderRadius: '8px',
+                              fontSize: '0.82rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.4rem',
+                              transition: 'all 0.2s',
+                            }}
+                          >
+                            📐 Track B: Geometric PnP
+                          </button>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.4rem' }}>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={handleExportCSV}
+                            title="Download CSV report with 6D pose numbers"
+                            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                          >
+                            📊 CSV
+                          </button>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={handleExportPDF}
+                            title="Download formatted printable PDF report"
+                            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                          >
+                            📄 PDF
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -1277,11 +1541,11 @@ export default function AnalysisPage() {
                         <div style={{ display: 'flex', gap: '1.5rem', fontFamily: 'var(--mono)', fontSize: '0.85rem' }}>
                           <div>
                             <span style={{ color: '#94a3b8' }}>Translation Delta (ΔT): </span>
-                            <strong style={{ color: '#38bdf8' }}>{(poseResults.comparison.translation_delta_m * 100).toFixed(1)} cm</strong>
+                            <strong style={{ color: '#38bdf8' }}>{poseResults.comparison.translation_delta_m != null ? `${(poseResults.comparison.translation_delta_m * 100).toFixed(1)} cm` : 'N/A'}</strong>
                           </div>
                           <div>
                             <span style={{ color: '#94a3b8' }}>Angular Delta (Δθ): </span>
-                            <strong style={{ color: '#a78bfa' }}>{poseResults.comparison.rotation_delta_deg}°</strong>
+                            <strong style={{ color: '#a78bfa' }}>{poseResults.comparison.rotation_delta_deg != null ? `${poseResults.comparison.rotation_delta_deg}°` : 'N/A'}</strong>
                           </div>
                         </div>
                       </div>
@@ -1302,7 +1566,7 @@ export default function AnalysisPage() {
                             </span>
                           </div>
 
-                          {poseResults.track_a && (
+                          {poseResults.track_a && !poseResults.track_a.error ? (
                             <>
                               <img
                                 src={`data:image/png;base64,${poseResults.track_a.pose_visualization}`}
@@ -1312,22 +1576,28 @@ export default function AnalysisPage() {
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', fontSize: '0.85rem' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: 'var(--code-bg)', borderRadius: '6px' }}>
                                   <span style={{ color: '#94a3b8' }}>Target Class:</span>
-                                  <strong>{poseResults.track_a.object_name} ({poseResults.track_a.confidence_pct.toFixed(1)}%)</strong>
+                                  <strong>{poseResults.track_a.object_name} ({poseResults.track_a.classification_confidence_pct != null ? Number(poseResults.track_a.classification_confidence_pct).toFixed(1) : 'N/A'}% classification)</strong>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: 'var(--code-bg)', borderRadius: '6px', fontFamily: 'var(--mono)' }}>
                                   <span style={{ color: '#94a3b8' }}>Translation [Tx, Ty, Tz]:</span>
-                                  <strong style={{ color: '#38bdf8' }}>{poseResults.track_a.translation_vector_m.formatted}</strong>
+                                  <strong style={{ color: '#38bdf8' }}>{poseResults.track_a.translation_vector_m?.formatted ?? 'N/A'}</strong>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: 'var(--code-bg)', borderRadius: '6px', fontFamily: 'var(--mono)' }}>
                                   <span style={{ color: '#94a3b8' }}>Quaternion:</span>
-                                  <strong style={{ color: '#a78bfa' }}>{poseResults.track_a.rotation_quaternion.formatted}</strong>
+                                  <strong style={{ color: '#a78bfa' }}>{poseResults.track_a.rotation_quaternion?.formatted ?? 'N/A'}</strong>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: 'var(--code-bg)', borderRadius: '6px' }}>
                                   <span style={{ color: '#94a3b8' }}>3D Box Dimensions:</span>
-                                  <span>{poseResults.track_a.bounding_box_3d.length_m}m × {poseResults.track_a.bounding_box_3d.width_m}m × {poseResults.track_a.bounding_box_3d.height_m}m</span>
+                                  <span>{poseResults.track_a.bounding_box_3d ? `${poseResults.track_a.bounding_box_3d.length_m}m × ${poseResults.track_a.bounding_box_3d.width_m}m × ${poseResults.track_a.bounding_box_3d.height_m}m` : 'N/A'}</span>
                                 </div>
                               </div>
                             </>
+                          ) : (
+                            <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>
+                              <p style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>🧠</p>
+                              <p style={{ fontWeight: 600, color: '#f59e0b', marginBottom: '0.35rem' }}>Track A Unavailable</p>
+                              <p style={{ fontSize: '0.82rem' }}>{poseResults.track_a?.error || 'EfficientPose model not trained yet. Train the model from the Dataset page.'}</p>
+                            </div>
                           )}
                         </div>
 
@@ -1343,7 +1613,7 @@ export default function AnalysisPage() {
                             </span>
                           </div>
 
-                          {poseResults.track_b && (
+                          {poseResults.track_b && !poseResults.track_b.error ? (
                             <>
                               <img
                                 src={`data:image/png;base64,${poseResults.track_b.pose_visualization}`}
@@ -1353,104 +1623,132 @@ export default function AnalysisPage() {
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', fontSize: '0.85rem' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: 'var(--code-bg)', borderRadius: '6px' }}>
                                   <span style={{ color: '#94a3b8' }}>Solver Engine:</span>
-                                  <strong>{poseResults.track_b.solver}</strong>
+                                  <strong>{poseResults.track_b.solver ?? 'N/A'}</strong>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: 'var(--code-bg)', borderRadius: '6px' }}>
                                   <span style={{ color: '#94a3b8' }}>PnP Inlier Ratio:</span>
-                                  <strong style={{ color: '#34d399' }}>{poseResults.track_b.pnp_metrics.inlier_count}/{poseResults.track_b.pnp_metrics.total_correspondences} ({poseResults.track_b.pnp_metrics.inlier_ratio_pct}%)</strong>
+                                  <strong style={{ color: '#34d399' }}>{poseResults.track_b.pnp_metrics ? `${poseResults.track_b.pnp_metrics.inlier_count}/${poseResults.track_b.pnp_metrics.total_correspondences} (${poseResults.track_b.pnp_metrics.inlier_ratio_pct}%)` : 'N/A'}</strong>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: 'var(--code-bg)', borderRadius: '6px' }}>
                                   <span style={{ color: '#94a3b8' }}>Reprojection Error:</span>
-                                  <strong style={{ color: '#fbbf24' }}>{poseResults.track_b.pnp_metrics.mean_reprojection_error_px} px ({poseResults.track_b.pnp_metrics.convergence})</strong>
+                                  <strong style={{ color: '#fbbf24' }}>{poseResults.track_b.pnp_metrics ? `${poseResults.track_b.pnp_metrics.mean_reprojection_error_px} px (${poseResults.track_b.pnp_metrics.convergence})` : 'N/A'}</strong>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: 'var(--code-bg)', borderRadius: '6px', fontFamily: 'var(--mono)' }}>
                                   <span style={{ color: '#94a3b8' }}>Translation [Tx, Ty, Tz]:</span>
-                                  <strong style={{ color: '#38bdf8' }}>{poseResults.track_b.translation_vector_m.formatted}</strong>
+                                  <strong style={{ color: '#38bdf8' }}>{poseResults.track_b.translation_vector_m?.formatted ?? 'N/A'}</strong>
                                 </div>
                               </div>
                             </>
+                          ) : (
+                            <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>
+                              <p style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📐</p>
+                              <p style={{ fontWeight: 600, color: '#f59e0b', marginBottom: '0.35rem' }}>Track B Unavailable</p>
+                              <p style={{ fontSize: '0.82rem' }}>{poseResults.track_b?.error || 'PnP solver could not find enough correspondences. Try providing a depth map.'}</p>
+                            </div>
                           )}
                         </div>
                       </div>
                     )}
 
                     {/* Content View: Track A Solo */}
-                    {poseTrackTab === 'track_a' && poseResults.track_a && (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem' }}>
-                        <div className="card">
-                          <h4>EfficientPose 3D Bounding Box Overlay</h4>
-                          <img src={`data:image/png;base64,${poseResults.track_a.pose_visualization}`} alt="Track A 3D Overlay" style={{ width: '100%', borderRadius: '8px' }} />
-                        </div>
-                        <div className="card">
-                          <h4>Track A Deep Regression Metrics</h4>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.5rem' }}>
-                            <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
-                              <h5 style={{ margin: '0 0 0.25rem', color: '#10b981' }}>Object Detection & Confidence</h5>
-                              <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>{poseResults.track_a.object_name}</div>
-                              <div style={{ fontSize: '0.85rem', color: '#34d399' }}>Confidence: {poseResults.track_a.confidence_pct}%</div>
-                            </div>
-                            <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
-                              <h5 style={{ margin: '0 0 0.25rem', color: '#38bdf8' }}>Translation Vector (Camera Frame)</h5>
-                              <div style={{ fontFamily: 'var(--mono)', fontSize: '0.95rem' }}>{poseResults.track_a.translation_vector_m.formatted}</div>
-                            </div>
-                            <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
-                              <h5 style={{ margin: '0 0 0.25rem', color: '#a78bfa' }}>Continuous 6D Rotation & Quaternion</h5>
-                              <div style={{ fontSize: '0.85rem' }}>{poseResults.track_a.rotation_euler_deg.formatted}</div>
-                              <div style={{ fontSize: '0.85rem', fontFamily: 'var(--mono)', marginTop: '0.2rem' }}>
-                                Quaternion: {poseResults.track_a.rotation_quaternion.formatted}
+                    {poseTrackTab === 'track_a' && (
+                      poseResults.track_a && !poseResults.track_a.error ? (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem' }}>
+                          <div className="card">
+                            <h4>EfficientPose 3D Bounding Box Overlay</h4>
+                            <img src={`data:image/png;base64,${poseResults.track_a.pose_visualization}`} alt="Track A 3D Overlay" style={{ width: '100%', borderRadius: '8px' }} />
+                          </div>
+                          <div className="card">
+                            <h4>Track A Deep Regression Metrics</h4>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.5rem' }}>
+                              <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
+                                <h5 style={{ margin: '0 0 0.25rem', color: '#10b981' }}>Object Detection & Confidence</h5>
+                                <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>{poseResults.track_a.object_name}</div>
+                                <div style={{ fontSize: '0.85rem', color: '#34d399' }}>Classification confidence: {poseResults.track_a.classification_confidence_pct != null ? Number(poseResults.track_a.classification_confidence_pct).toFixed(1) : 'N/A'}%</div>
                               </div>
-                            </div>
-                            <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
-                              <h5 style={{ margin: '0 0 0.25rem', color: '#f59e0b' }}>3D Metric Bounding Box</h5>
-                              <div style={{ fontSize: '0.85rem' }}>
-                                {poseResults.track_a.bounding_box_3d.length_m}m (L) × {poseResults.track_a.bounding_box_3d.width_m}m (W) × {poseResults.track_a.bounding_box_3d.height_m}m (H)
+                              <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
+                                <h5 style={{ margin: '0 0 0.25rem', color: '#38bdf8' }}>Translation Vector (Camera Frame)</h5>
+                                <div style={{ fontFamily: 'var(--mono)', fontSize: '0.95rem' }}>{poseResults.track_a.translation_vector_m?.formatted ?? 'N/A'}</div>
                               </div>
-                              <div style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '0.2rem' }}>
-                                Volume: {poseResults.track_a.bounding_box_3d.volume_cm3} cm³
+                              <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
+                                <h5 style={{ margin: '0 0 0.25rem', color: '#a78bfa' }}>Directly Predicted Euler Angles</h5>
+                                <div style={{ fontSize: '0.85rem' }}>{poseResults.track_a.rotation_euler_deg?.formatted ?? 'N/A'}</div>
+                                <div style={{ fontSize: '0.85rem', fontFamily: 'var(--mono)', marginTop: '0.2rem' }}>
+                                  Quaternion: {poseResults.track_a.rotation_quaternion?.formatted ?? 'N/A'}
+                                </div>
+                              </div>
+                              <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
+                                <h5 style={{ margin: '0 0 0.25rem', color: '#f59e0b' }}>3D Metric Bounding Box</h5>
+                                <div style={{ fontSize: '0.85rem' }}>
+                                  {poseResults.track_a.bounding_box_3d
+                                    ? `${poseResults.track_a.bounding_box_3d.length_m}m (L) × ${poseResults.track_a.bounding_box_3d.width_m}m (W) × ${poseResults.track_a.bounding_box_3d.height_m}m (H)`
+                                    : 'N/A'}
+                                </div>
+                                {poseResults.track_a.bounding_box_3d?.volume_cm3 != null && (
+                                  <div style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '0.2rem' }}>
+                                    Volume: {poseResults.track_a.bounding_box_3d.volume_cm3} cm³
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div className="card" style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>
+                          <p style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>🧠</p>
+                          <p style={{ fontWeight: 600, color: '#f59e0b', marginBottom: '0.35rem' }}>Track A Unavailable</p>
+                          <p style={{ fontSize: '0.82rem' }}>{poseResults.track_a?.error || 'EfficientPose model not trained yet. Train the model from the Dataset page.'}</p>
+                        </div>
+                      )
                     )}
 
                     {/* Content View: Track B Solo */}
-                    {poseTrackTab === 'track_b' && poseResults.track_b && (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem' }}>
-                        <div className="card">
-                          <h4>PnP 2D-3D Keypoint Correspondences</h4>
-                          <img src={`data:image/png;base64,${poseResults.track_b.pose_visualization}`} alt="Track B PnP Overlay" style={{ width: '100%', borderRadius: '8px' }} />
-                        </div>
-                        <div className="card">
-                          <h4>Proper PnP Geometric Metrics</h4>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.5rem' }}>
-                            <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
-                              <h5 style={{ margin: '0 0 0.25rem', color: '#d946ef' }}>PnP Solver & Optimizations</h5>
-                              <div style={{ fontSize: '0.95rem', fontWeight: 'bold' }}>{poseResults.track_b.solver}</div>
-                            </div>
-                            <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
-                              <h5 style={{ margin: '0 0 0.25rem', color: '#34d399' }}>Correspondences & Inlier Rate</h5>
-                              <div style={{ fontSize: '0.95rem', fontWeight: 'bold' }}>
-                                {poseResults.track_b.pnp_metrics.inlier_count} of {poseResults.track_b.pnp_metrics.total_correspondences} Inliers ({poseResults.track_b.pnp_metrics.inlier_ratio_pct}%)
+                    {poseTrackTab === 'track_b' && (
+                      poseResults.track_b && !poseResults.track_b.error ? (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem' }}>
+                          <div className="card">
+                            <h4>PnP 2D-3D Keypoint Correspondences</h4>
+                            <img src={`data:image/png;base64,${poseResults.track_b.pose_visualization}`} alt="Track B PnP Overlay" style={{ width: '100%', borderRadius: '8px' }} />
+                          </div>
+                          <div className="card">
+                            <h4>Proper PnP Geometric Metrics</h4>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.5rem' }}>
+                              <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
+                                <h5 style={{ margin: '0 0 0.25rem', color: '#d946ef' }}>PnP Solver & Optimizations</h5>
+                                <div style={{ fontSize: '0.95rem', fontWeight: 'bold' }}>{poseResults.track_b.solver ?? 'N/A'}</div>
                               </div>
-                              <div style={{ fontSize: '0.85rem', color: '#fbbf24', marginTop: '0.2rem' }}>
-                                Mean Reprojection Error: {poseResults.track_b.pnp_metrics.mean_reprojection_error_px} px ({poseResults.track_b.pnp_metrics.convergence})
+                              <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
+                                <h5 style={{ margin: '0 0 0.25rem', color: '#34d399' }}>Correspondences & Inlier Rate</h5>
+                                <div style={{ fontSize: '0.95rem', fontWeight: 'bold' }}>
+                                  {poseResults.track_b.pnp_metrics
+                                    ? `${poseResults.track_b.pnp_metrics.inlier_count} of ${poseResults.track_b.pnp_metrics.total_correspondences} Inliers (${poseResults.track_b.pnp_metrics.inlier_ratio_pct}%)`
+                                    : 'N/A'}
+                                </div>
+                                <div style={{ fontSize: '0.85rem', color: '#fbbf24', marginTop: '0.2rem' }}>
+                                  Mean Reprojection Error: {poseResults.track_b.pnp_metrics ? `${poseResults.track_b.pnp_metrics.mean_reprojection_error_px} px (${poseResults.track_b.pnp_metrics.convergence})` : 'N/A'}
+                                </div>
                               </div>
-                            </div>
-                            <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
-                              <h5 style={{ margin: '0 0 0.25rem', color: '#38bdf8' }}>PnP + Depth Translation</h5>
-                              <div style={{ fontFamily: 'var(--mono)', fontSize: '0.95rem' }}>{poseResults.track_b.translation_vector_m.formatted}</div>
-                            </div>
-                            <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
-                              <h5 style={{ margin: '0 0 0.25rem', color: '#a78bfa' }}>Rodrigues Rotation Angles</h5>
-                              <div style={{ fontSize: '0.85rem' }}>{poseResults.track_b.rotation_euler_deg.formatted}</div>
-                              <div style={{ fontSize: '0.85rem', fontFamily: 'var(--mono)', marginTop: '0.2rem' }}>
-                                Quaternion: {poseResults.track_b.rotation_quaternion.formatted}
+                              <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
+                                <h5 style={{ margin: '0 0 0.25rem', color: '#38bdf8' }}>PnP + Depth Translation</h5>
+                                <div style={{ fontFamily: 'var(--mono)', fontSize: '0.95rem' }}>{poseResults.track_b.translation_vector_m?.formatted ?? 'N/A'}</div>
+                              </div>
+                              <div style={{ background: 'var(--code-bg)', padding: '0.75rem', borderRadius: '8px' }}>
+                                <h5 style={{ margin: '0 0 0.25rem', color: '#a78bfa' }}>Rodrigues Rotation Angles</h5>
+                                <div style={{ fontSize: '0.85rem' }}>{poseResults.track_b.rotation_euler_deg?.formatted ?? 'N/A'}</div>
+                                <div style={{ fontSize: '0.85rem', fontFamily: 'var(--mono)', marginTop: '0.2rem' }}>
+                                  Quaternion: {poseResults.track_b.rotation_quaternion?.formatted ?? 'N/A'}
+                                </div>
                               </div>
                             </div>
                           </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div className="card" style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>
+                          <p style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📐</p>
+                          <p style={{ fontWeight: 600, color: '#f59e0b', marginBottom: '0.35rem' }}>Track B Unavailable</p>
+                          <p style={{ fontSize: '0.82rem' }}>{poseResults.track_b?.error || 'PnP solver could not find enough correspondences. Try providing a depth map.'}</p>
+                        </div>
+                      )
                     )}
 
                     {/* Part 3: Interactive 3D Point Cloud WebGL Canvas */}
