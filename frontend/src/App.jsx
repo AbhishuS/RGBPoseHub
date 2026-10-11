@@ -49,22 +49,28 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
     setUser(null);
   };
 
   useEffect(() => {
     if (!user) return;
+    let failureCount = 0;
     const checkSession = async () => {
       try {
         await authAPI.getProfile();
+        failureCount = 0;
       } catch (err) {
         if (err.response?.status === 401 || err.response?.status === 403) {
-          handleLogout();
+          failureCount++;
+          if (failureCount >= 2 && !localStorage.getItem('access_token')) {
+            handleLogout();
+          }
         }
       }
     };
-    const interval = setInterval(checkSession, 8000);
+    const interval = setInterval(checkSession, 12000);
     window.addEventListener('focus', checkSession);
     return () => {
       clearInterval(interval);

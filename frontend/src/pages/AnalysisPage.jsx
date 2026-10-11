@@ -771,24 +771,41 @@ export default function AnalysisPage() {
                     padding: '1.25rem',
                     borderRadius: '12px',
                     marginBottom: '1.5rem',
-                    background: gatekeeper?.is_rgbd ? 'rgba(16, 185, 129, 0.12)' : gatekeeper?.has_depth_preview ? 'rgba(245, 158, 11, 0.10)' : 'rgba(239, 68, 68, 0.12)',
-                    border: `1.5px solid ${gatekeeper?.is_rgbd ? '#10b981' : gatekeeper?.has_depth_preview ? '#f59e0b' : '#ef4444'}`,
+                    background: gatekeeper?.is_rgbd
+                      ? 'rgba(16, 185, 129, 0.12)'
+                      : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED')
+                      ? 'rgba(37, 99, 235, 0.08)'
+                      : 'rgba(239, 68, 68, 0.12)',
+                    border: `1.5px solid ${
+                      gatekeeper?.is_rgbd
+                        ? '#10b981'
+                        : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED')
+                        ? '#3b82f6'
+                        : '#ef4444'
+                    }`,
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.4rem' }}>
-                        <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: gatekeeper?.is_rgbd ? '#10b981' : gatekeeper?.has_depth_preview ? '#f59e0b' : '#ef4444' }}>
-                          {gatekeeper?.is_rgbd ? '✅ VERIFIED RGB-D IMAGE' : gatekeeper?.has_depth_preview ? '⚠️ DEPTH CHANNEL PREVIEW (UNSCALED)' : '❌ NO METRIC DEPTH MAP'}
+                        <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: gatekeeper?.is_rgbd ? '#10b981' : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED') ? '#2563eb' : '#ef4444' }}>
+                          {gatekeeper?.is_rgbd
+                            ? '✅ VERIFIED RGB-D SENSOR IMAGE'
+                            : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED')
+                            ? '📸 2D PHOTO (MONOCULAR DEPTH ESTIMATED)'
+                            : '❌ NO DEPTH MAP'}
                         </span>
-                        <span className="badge" style={{ background: gatekeeper?.is_rgbd ? '#10b98122' : '#ef444422', color: gatekeeper?.is_rgbd ? '#10b981' : '#ef4444' }}>
-                          {gatekeeper?.status}
+                        <span className="badge" style={{
+                          background: gatekeeper?.is_rgbd ? '#10b98122' : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED') ? '#3b82f622' : '#ef444422',
+                          color: gatekeeper?.is_rgbd ? '#10b981' : (gatekeeper?.has_depth_preview || gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED') ? '#2563eb' : '#ef4444'
+                        }}>
+                          {gatekeeper?.status === 'MONOCULAR_DEPTH_ESTIMATED' ? 'MONOCULAR ESTIMATE' : (gatekeeper?.status || 'READY')}
                         </span>
                       </div>
                       <p style={{ margin: 0, fontSize: '0.92rem', color: 'var(--text-secondary)' }}>
                         {gatekeeper?.reason}
                       </p>
-                      {gatekeeper?.is_rgbd && gatekeeper?.depth_stats && (
+                      {gatekeeper?.depth_stats && (
                         <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem', fontSize: '0.85rem' }}>
                           <span><strong>Coverage:</strong> {gatekeeper.depth_stats.coverage_pct}%</span>
                           <span><strong>Depth Range:</strong> {gatekeeper.depth_stats.min_depth}m – {gatekeeper.depth_stats.max_depth}m</span>
@@ -798,25 +815,14 @@ export default function AnalysisPage() {
                     </div>
 
                     <div>
-                      {(gatekeeper?.is_rgbd || gatekeeper?.has_depth_preview || currentDepthFilename) ? (
-                        <button className="btn btn-primary" onClick={proceedToPoseEstimation} disabled={poseLoading} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <span>{poseLoading ? '⏳ Computing Pose...' : '🎯 Estimate Pose'}</span>
-                          {selectedObject && (
-                            <span style={{ fontSize: '0.78rem', background: 'rgba(255,255,255,0.2)', padding: '0.15rem 0.5rem', borderRadius: '6px' }}>
-                              {selectedObject.label}
-                            </span>
-                          )}
-                        </button>
-                      ) : (
-                        <div style={{ textAlign: 'right' }}>
-                          <button className="btn btn-secondary" disabled style={{ opacity: 0.6, cursor: 'not-allowed' }}>
-                            🚫 Pose Detection Blocked
-                          </button>
-                          <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '0.25rem' }}>
-                            Requires Depth Data
-                          </div>
-                        </div>
-                      )}
+                      <button className="btn btn-primary" onClick={proceedToPoseEstimation} disabled={poseLoading} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span>{poseLoading ? '⏳ Computing Pose...' : '🎯 Estimate Pose'}</span>
+                        {selectedObject && (
+                          <span style={{ fontSize: '0.78rem', background: 'rgba(255,255,255,0.2)', padding: '0.15rem 0.5rem', borderRadius: '6px' }}>
+                            {selectedObject.label}
+                          </span>
+                        )}
+                      </button>
                     </div>
                   </div>
                 </div>

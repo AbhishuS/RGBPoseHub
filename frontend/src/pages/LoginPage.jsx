@@ -114,6 +114,9 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
         }
       } else {
         localStorage.setItem('access_token', res.data.access_token);
+        if (res.data.refresh_token) {
+          localStorage.setItem('refresh_token', res.data.refresh_token);
+        }
         localStorage.setItem('user', JSON.stringify(res.data.user));
         onLogin(res.data.user);
         navigate('/');
@@ -160,6 +163,9 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
         account_type: isAdmin ? 'admin' : 'user',
       });
       localStorage.setItem('access_token', res.data.access_token);
+      if (res.data.refresh_token) {
+        localStorage.setItem('refresh_token', res.data.refresh_token);
+      }
       localStorage.setItem('user', JSON.stringify(res.data.user));
       onLogin(res.data.user);
       navigate('/');

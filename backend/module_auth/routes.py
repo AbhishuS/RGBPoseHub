@@ -227,7 +227,7 @@ def _complete_login(user):
         token_jti=jti,
         ip_address=client_ip,
         user_agent=request.headers.get('User-Agent', '')[:500],
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
     )
     db.session.add(session)
     
@@ -255,16 +255,30 @@ def refresh():
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
     
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    if not user or not user.is_active:
+        return jsonify({'error': 'User not found or account deactivated'}), 401
     
     jti = str(uuid.uuid4())
     access_token = create_access_token(
         identity=user_id,
         additional_claims={'jti': jti, 'role': user.role, 'username': user.username}
     )
+
+    # Ensure this refreshed token is recorded as an active session
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if client_ip and ',' in client_ip:
+        client_ip = client_ip.split(',')[0].strip()
+    session = Session(
+        user_id=user.id,
+        token_jti=jti,
+        ip_address=client_ip,
+        user_agent=request.headers.get('User-Agent', '')[:500],
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    db.session.add(session)
+    db.session.commit()
     
-    return jsonify({'access_token': access_token}), 200
+    return jsonify({'access_token': access_token, 'user': user.to_dict()}), 200
 
 
 # ─── Logout ──────────────────────────────────────────────────

@@ -28,16 +28,23 @@ ml_bp = Blueprint('ml', __name__)
 _ALLOWED_IMAGE_EXTS = {'jpg', 'jpeg', 'png', 'tiff', 'tif', 'bmp', 'webp', 'gif', 'avif', 'heic', 'heif', 'pdf'}
 
 
+import math
+
+
 def _sanitize_for_json(val):
-    """Recursively converts NumPy scalars/arrays and non-serializable objects to native Python."""
+    """Recursively converts NumPy scalars/arrays and non-serializable objects to native Python, sanitizing NaN/Inf."""
     if isinstance(val, dict):
         return {str(k): _sanitize_for_json(v) for k, v in val.items()}
     elif isinstance(val, (list, tuple, set)):
         return [_sanitize_for_json(x) for x in val]
     elif hasattr(val, 'item'):
-        return val.item()
+        val = val.item()
     elif hasattr(val, 'tolist'):
-        return val.tolist()
+        return [_sanitize_for_json(x) for x in val.tolist()]
+
+    if isinstance(val, float):
+        if math.isnan(val) or math.isinf(val):
+            return 0.0
     return val
 
 

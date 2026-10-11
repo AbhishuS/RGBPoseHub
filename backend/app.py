@@ -47,8 +47,9 @@ def create_app(config_name=None):
                 session = Session.query.filter_by(token_jti=jti).first()
                 if session and not session.is_active:
                     return True
-            active_sessions = Session.query.filter_by(user_id=user_id, is_active=True).count()
-            if active_sessions == 0:
+            # Only block if user had recorded sessions and ALL of them were deactivated (e.g. admin revoked all)
+            user_sessions = Session.query.filter_by(user_id=user_id).all()
+            if user_sessions and all(not s.is_active for s in user_sessions):
                 return True
             return False
         except Exception:
