@@ -31,6 +31,45 @@ def create_app(config_name=None):
     # Initialize extensions
     db.init_app(app)
     jwt.init_app(app)
+
+    @jwt.token_in_blocklist_loader
+    def check_if_token_revoked(jwt_header, jwt_payload):
+        try:
+            from module_auth.models import User, Session
+            user_id = jwt_payload.get('sub')
+            if not user_id:
+                return True
+            user = User.query.get(user_id)
+            if not user or not user.is_active:
+                return True
+            jti = jwt_payload.get('jti')
+            if jti:
+                session = Session.query.filter_by(token_jti=jti).first()
+                if session and not session.is_active:
+                    return True
+            active_sessions = Session.query.filter_by(user_id=user_id, is_active=True).count()
+            if active_sessions == 0:
+                return True
+            return False
+        except Exception:
+            return False
+
+    @jwt.revoked_token_loader
+    def revoked_token_callback(jwt_header, jwt_payload):
+        return {'error': 'Session has been revoked or account deactivated. Please log in again.'}, 401
+
+    @jwt.expired_token_loader
+    def expired_token_callback(jwt_header, jwt_payload):
+        return {'error': 'Token has expired. Please log in again.'}, 401
+
+    @jwt.invalid_token_loader
+    def invalid_token_callback(error_string):
+        return {'error': 'Invalid authorization token.'}, 401
+
+    @jwt.unauthorized_loader
+    def unauthorized_callback(error_string):
+        return {'error': 'Authentication required.'}, 401
+
     CORS(app, supports_credentials=True, origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5001", "http://127.0.0.1:5001", "*"])
 
     # Register blueprints

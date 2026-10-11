@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { dataAPI, mlAPI } from '../services/api';
 import PointCloudViewer3D from '../components/PointCloudViewer3D';
 
 export default function AnalysisPage() {
+  const location = useLocation();
   const [tab, setTab] = useState('upload'); // upload | catalog
   const [sherloqCategory, setSherloqCategory] = useState('gatekeeper');
   // gatekeeper | general | metadata | inspection | colors | detail | noise | jpeg
@@ -52,6 +54,12 @@ export default function AnalysisPage() {
     loadSamples();
     if (tab === 'catalog') loadCatalog();
   }, [tab]);
+
+  useEffect(() => {
+    if (location.state?.filename) {
+      analyzeFilename(location.state.filename);
+    }
+  }, [location.state?.filename]);
 
   const loadSamples = async () => {
     setSamplesLoading(true);

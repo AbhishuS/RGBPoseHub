@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import LoginPage from './pages/LoginPage';
@@ -11,6 +11,7 @@ import LandingPage from './pages/LandingPage';
 import LiquidChrome from './components/LiquidChrome';
 import AboutPage from './pages/AboutPage';
 import ProjectHeader from './components/ProjectHeader';
+import { authAPI } from './services/api';
 import { isAdminUser, normalizeUserRole } from './utils/auth';
 import './styles/index.css';
 
@@ -51,6 +52,25 @@ export default function App() {
     localStorage.removeItem('user');
     setUser(null);
   };
+
+  useEffect(() => {
+    if (!user) return;
+    const checkSession = async () => {
+      try {
+        await authAPI.getProfile();
+      } catch (err) {
+        if (err.response?.status === 401 || err.response?.status === 403) {
+          handleLogout();
+        }
+      }
+    };
+    const interval = setInterval(checkSession, 8000);
+    window.addEventListener('focus', checkSession);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', checkSession);
+    };
+  }, [user]);
 
   return (
     <Router>

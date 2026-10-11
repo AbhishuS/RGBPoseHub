@@ -7,6 +7,15 @@ from datetime import datetime, timezone
 from extensions import db
 
 
+def _format_iso(dt):
+    if not dt:
+        return None
+    iso = dt.isoformat()
+    if not iso.endswith('Z') and '+' not in iso:
+        iso += 'Z'
+    return iso
+
+
 class User(db.Model):
     """User account model."""
     __tablename__ = 'users'
@@ -44,8 +53,8 @@ class User(db.Model):
             'role': self.role,
             'is_active': self.is_active,
             'is_2fa_enabled': self.is_2fa_enabled,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'last_login_at': self.last_login_at.isoformat() if self.last_login_at else None,
+            'created_at': _format_iso(self.created_at),
+            'last_login_at': _format_iso(self.last_login_at),
             'total_analyses': self.total_analyses,
             'total_uploads': self.total_uploads,
         }
@@ -76,8 +85,8 @@ class Session(db.Model):
             'ip_address': self.ip_address,
             'user_agent': self.user_agent,
             'is_active': self.is_active,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'created_at': _format_iso(self.created_at),
+            'expires_at': _format_iso(self.expires_at),
         }
 
 
@@ -109,7 +118,7 @@ class ActivityLog(db.Model):
             'metadata': self.metadata_json,
             'ip_address': self.ip_address,
             'status': self.status,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'created_at': _format_iso(self.created_at),
         }
 
 

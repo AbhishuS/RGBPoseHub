@@ -14,16 +14,16 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 errors gracefully - never trap visitors on /login
+// Handle 401 errors gracefully - immediately log out and redirect to /login
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem('access_token');
       localStorage.removeItem('user');
-      const publicPaths = ['/', '/landing', '/about', '/login', '/admin/login'];
+      const publicPaths = ['/login', '/admin/login'];
       if (!publicPaths.includes(window.location.pathname)) {
-        window.location.href = '/';
+        window.location.href = '/login';
       }
     }
     return Promise.reject(err);
@@ -81,6 +81,8 @@ export const mlAPI = {
   estimatePose: (data) => api.post('/ml/estimate-pose', data),
   getPointCloud3D: (data) => api.post('/ml/point-cloud-3d', data),
   getSampleRGBDImages: () => api.get('/ml/sample-rgbd-images'),
+  getRecentAnalyses: () => api.get('/ml/recent-analyses'),
+  getImageUrl: (filename) => `${API_BASE}/ml/image/${filename}`,
 };
 
 export default api;

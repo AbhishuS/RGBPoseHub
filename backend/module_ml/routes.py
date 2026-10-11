@@ -12,6 +12,8 @@ from module_ml.visualizer import Visualizer
 from module_ml.forensic_analyzer import ForensicAnalyzer
 from module_ml.pose_estimator import PoseEstimator
 from module_auth.middleware import log_activity
+from module_auth.models import User, ActivityLog, _format_iso
+from extensions import db
 
 # ── HEIC/HEIF support: register opener so PIL handles .heic everywhere ──────
 try:
@@ -483,9 +485,20 @@ def forensic_analyze():
                  f'Ran Sherloq Forensics & RGB-D Inspection: {filename}',
                  metadata={
                      'filename': filename,
+                     'original_filename': original_filename or filename,
                      'is_rgbd': forensic_results.get('rgbd_gatekeeper', {}).get('is_rgbd'),
                      'status': forensic_results.get('rgbd_gatekeeper', {}).get('status'),
+                     'candidate_objects_count': len(candidate_objects),
                  })
+
+    try:
+        user_rec = User.query.get(user_id)
+        if user_rec:
+            user_rec.total_analyses = (user_rec.total_analyses or 0) + 1
+            user_rec.total_uploads = (user_rec.total_uploads or 0) + 1
+            db.session.commit()
+    except Exception:
+        pass
 
     return jsonify(_sanitize_for_json({
         'forensics': forensic_results,
@@ -719,5 +732,66 @@ def get_sample_rgbd_images():
             })
 
     return jsonify({'samples': samples}), 200
+
+
+@ml_bp.route('/image/<filename>', methods=['GET'])
+def get_analyzed_image(filename):
+    """Serve uploaded or sample images for recent analysis previews and thumbnails."""
+    import os
+    safe_filename = os.path.basename(filename)
+    upload_dir = current_app.config['UPLOAD_FOLDER']
+    candidates = [
+        os.path.join(upload_dir, safe_filename),
+        os.path.join(upload_dir, 'samples', safe_filename),
+        os.path.join(current_app.config['DATASET_FOLDER'], 'images', safe_filename),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            ext = os.path.splitext(path)[1].lower()
+            mimes = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.tiff': 'image/tiff',
+                '.tif': 'image/tiff',
+                '.webp': 'image/webp'
+            }
+            return send_file(path, mimetype=mimes.get(ext, 'image/png'))
+    return jsonify({'error': 'Image not found'}), 404
+
+
+@ml_bp.route('/recent-analyses', methods=['GET'])
+@jwt_required()
+def get_user_recent_analyses():
+    """Returns the last 4 images analysed by the current user."""
+    import json
+    user_id = get_jwt_identity()
+    analysis_actions = ['image_analysis', 'forensic_analysis', 'pose_estimation']
+    logs = ActivityLog.query.filter(
+        ActivityLog.user_id == user_id,
+        ActivityLog.action.in_(analysis_actions)
+    ).order_by(ActivityLog.created_at.desc()).limit(4).all()
+
+    items = []
+    for log in logs:
+        meta = {}
+        if log.metadata_json:
+            try:
+                meta = json.loads(log.metadata_json)
+            except Exception:
+                meta = {}
+        fn = meta.get('filename')
+        items.append({
+            'id': log.id,
+            'action': log.action,
+            'description': log.description,
+            'filename': fn,
+            'original_filename': meta.get('original_filename') or fn or 'Analyzed Image',
+            'created_at': _format_iso(log.created_at),
+            'metadata': meta,
+        })
+
+    return jsonify({'analyses': items}), 200
+
 
 

@@ -12,7 +12,7 @@ from flask_jwt_extended import (
 )
 import bcrypt
 from extensions import db
-from module_auth.models import User, Session, ActivityLog, TwoFactorSecret
+from module_auth.models import User, Session, ActivityLog, TwoFactorSecret, _format_iso
 from module_auth.two_factor import TwoFactorAuth
 from module_auth.middleware import log_activity
 
@@ -199,21 +199,26 @@ def _complete_login(user):
     )
     refresh_token = create_refresh_token(identity=user.id)
     
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if client_ip and ',' in client_ip:
+        client_ip = client_ip.split(',')[0].strip()
+    
     # Create session record
     session = Session(
         user_id=user.id,
         token_jti=jti,
-        ip_address=request.remote_addr,
+        ip_address=client_ip,
         user_agent=request.headers.get('User-Agent', '')[:500],
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
     )
     db.session.add(session)
     
     # Update last login
-    user.last_login_at = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+    user.last_login_at = now_utc
     db.session.commit()
     
-    log_activity(user.id, 'login_success', 'auth', f'Login from {request.remote_addr}')
+    log_activity(user.id, 'login_success', 'auth', f'Login from {client_ip}')
     
     return jsonify({
         'message': 'Login successful',
@@ -378,17 +383,49 @@ def get_user_stats():
     if not user:
         return jsonify({'error': 'User not found'}), 404
     
-    # Get activity counts
+    # Get activity counts across all analysis actions
+    analysis_actions = ['image_analysis', 'forensic_analysis', 'pose_estimation']
     total_logins = ActivityLog.query.filter_by(user_id=user_id, action='login_success').count()
-    total_analyses = ActivityLog.query.filter_by(user_id=user_id, action='image_analysis').count()
-    total_uploads = ActivityLog.query.filter_by(user_id=user_id, action='image_upload').count()
+    total_analyses = ActivityLog.query.filter(
+        ActivityLog.user_id == user_id,
+        ActivityLog.action.in_(analysis_actions)
+    ).count()
+    total_uploads = ActivityLog.query.filter(
+        ActivityLog.user_id == user_id,
+        (ActivityLog.action == 'image_upload') | (ActivityLog.action == 'forensic_analysis')
+    ).count()
     
-    # Recent activity (last 5)
+    # Recent activity (last 8)
     recent = ActivityLog.query.filter_by(user_id=user_id)\
-        .order_by(ActivityLog.created_at.desc()).limit(5).all()
+        .order_by(ActivityLog.created_at.desc()).limit(8).all()
     
     # Active sessions count
     active_sessions = Session.query.filter_by(user_id=user_id, is_active=True).count()
+
+    # Recent 4 analyses for the user (with filename & metadata)
+    recent_analyses_logs = ActivityLog.query.filter(
+        ActivityLog.user_id == user_id,
+        ActivityLog.action.in_(analysis_actions)
+    ).order_by(ActivityLog.created_at.desc()).limit(4).all()
+
+    recent_analyses = []
+    for log in recent_analyses_logs:
+        meta = {}
+        if log.metadata_json:
+            try:
+                meta = json.loads(log.metadata_json)
+            except Exception:
+                meta = {}
+        filename = meta.get('filename')
+        recent_analyses.append({
+            'id': log.id,
+            'action': log.action,
+            'description': log.description,
+            'filename': filename,
+            'original_filename': meta.get('original_filename') or filename or 'Analyzed Image',
+            'created_at': _format_iso(log.created_at),
+            'metadata': meta,
+        })
     
     return jsonify({
         'stats': {
@@ -396,9 +433,10 @@ def get_user_stats():
             'total_analyses': total_analyses,
             'total_uploads': total_uploads,
             'active_sessions': active_sessions,
-            'member_since': user.created_at.isoformat() if user.created_at else None,
+            'member_since': _format_iso(user.created_at),
         },
         'recent_activity': [log.to_dict() for log in recent],
+        'recent_analyses': recent_analyses,
     }), 200
 
 
@@ -431,15 +469,27 @@ def admin_list_users():
         activity = ActivityLog.query.filter_by(user_id=u.id).order_by(ActivityLog.created_at.desc()).limit(50).all()
         login_history = ActivityLog.query.filter_by(user_id=u.id, action='login_success').order_by(ActivityLog.created_at.desc()).all()
         active_sessions = sum(1 for s in sessions if s.is_active)
+        
         last_login_ip = None
         if login_history:
             last_login_ip = login_history[0].ip_address
+        elif sessions:
+            last_login_ip = sessions[0].ip_address
+
+        last_login_time = u.last_login_at
+        if not last_login_time:
+            if login_history:
+                last_login_time = login_history[0].created_at
+            elif sessions:
+                last_login_time = sessions[0].created_at
+
         row = u.to_dict()
+        row['last_login_at'] = _format_iso(last_login_time)
         row['sessions'] = [s.to_dict() for s in sessions]
         row['activity'] = [a.to_dict() for a in activity]
         row['login_history'] = [a.to_dict() for a in login_history]
         row['active_sessions'] = active_sessions
-        row['last_login_ip'] = last_login_ip
+        row['last_login_ip'] = last_login_ip or '—'
         result.append(row)
 
     return jsonify({'users': result, 'total': len(result)}), 200
@@ -448,7 +498,7 @@ def admin_list_users():
 @auth_bp.route('/admin/users/<user_id>', methods=['DELETE'])
 @jwt_required()
 def admin_delete_user(user_id):
-    """Admin: permanently delete a user account."""
+    """Admin: permanently delete a user account and invalidate their tokens."""
     current_id = get_jwt_identity()
     current = User.query.get(current_id)
     if not current or current.role != 'admin':
@@ -460,16 +510,23 @@ def admin_delete_user(user_id):
     if target.role == 'admin':
         return jsonify({'error': 'Cannot delete admin account'}), 403
 
+    target.is_active = False
+    sessions = Session.query.filter_by(user_id=user_id).all()
+    now = datetime.now(timezone.utc)
+    for s in sessions:
+        s.is_active = False
+        s.revoked_at = now
+    
     db.session.delete(target)
     db.session.commit()
     log_activity(current_id, 'admin_delete_user', 'admin', f'Deleted user {target.email}')
-    return jsonify({'message': f'User {target.email} deleted'}), 200
+    return jsonify({'message': f'User {target.email} deleted and all sessions revoked.'}), 200
 
 
 @auth_bp.route('/admin/users/<user_id>/revoke-sessions', methods=['POST'])
 @jwt_required()
 def admin_revoke_user_sessions(user_id):
-    """Admin: revoke all active sessions for a user."""
+    """Admin: revoke all active sessions for a user immediately."""
     current_id = get_jwt_identity()
     current = User.query.get(current_id)
     if not current or current.role != 'admin':
@@ -486,5 +543,5 @@ def admin_revoke_user_sessions(user_id):
         s.revoked_at = now
     db.session.commit()
     log_activity(current_id, 'admin_revoke_sessions', 'admin', f'Revoked {len(active)} sessions for {target.email}')
-    return jsonify({'message': f'Revoked {len(active)} active session(s)', 'revoked': len(active)}), 200
+    return jsonify({'message': f'Revoked {len(active)} active session(s). User logged out.', 'revoked': len(active)}), 200
 

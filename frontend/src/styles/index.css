@@ -1315,8 +1315,8 @@ tbody tr:hover td { background: var(--bg-secondary); }
   /* Landing page */
   .landing-topbar   { flex-wrap: wrap; gap: 0.5rem; padding: 0.75rem 1rem; }
   .landing-top-note { display: none; }
-  .landing-actions  { flex-direction: column; gap: 0.75rem; }
-  .landing-actions .landing-button { width: 100%; justify-content: center; }
+  .landing-actions  { flex-direction: column; align-items: center; gap: 0.5rem; width: 100%; max-width: 280px; margin: 1.25rem auto 0; }
+  .landing-actions .landing-button { width: 100%; min-height: 40px; padding: 0.55rem 1rem; font-size: 0.82rem; justify-content: center; box-sizing: border-box; }
   .landing-legal-footer { flex-direction: column; gap: 0.4rem; text-align: center; }
   /* About/explore */
   .explore-topbar   { flex-wrap: wrap; gap: 0.4rem; }
@@ -1535,6 +1535,8 @@ tbody tr:hover td { background: var(--bg-secondary); }
   .landing-desktop-break { display: none; }
   .landing-team { max-width: 420px; }
   .landing-team span { font-size: .62rem; }
+  .landing-actions { max-width: 260px; gap: 0.45rem; }
+  .landing-actions .landing-button { min-height: 38px; padding: 0.5rem 0.9rem; font-size: 0.8rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   .landing-hero { animation: none; }
