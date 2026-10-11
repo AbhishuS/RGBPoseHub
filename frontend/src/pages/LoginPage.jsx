@@ -170,6 +170,65 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
 
           {/* ── Login Form ── */}
           {mode === 'login' && (
+            <>
+              <div style={{
+                background: 'rgba(59, 130, 246, 0.08)',
+                border: '1px solid rgba(59, 130, 246, 0.25)',
+                borderRadius: '8px',
+                padding: '0.75rem',
+                marginBottom: '1rem',
+                fontSize: '0.85rem'
+              }}>
+                <div style={{ fontWeight: 600, color: '#2563eb', marginBottom: '0.35rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>🔑 Default Credentials</span>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Click to autofill:</span>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>
+                  <button
+                    type="button"
+                    style={{
+                      flex: 1,
+                      padding: '0.4rem 0.6rem',
+                      fontSize: '0.78rem',
+                      borderRadius: '6px',
+                      border: '1px solid #cbd5e1',
+                      background: '#ffffff',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      color: '#1e293b'
+                    }}
+                    onClick={() => {
+                      setFormData({ ...formData, email: 'admin@rgbposehub.org', password: 'Password123!' });
+                      setError('');
+                    }}
+                  >
+                    ⚡ Admin
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      flex: 1,
+                      padding: '0.4rem 0.6rem',
+                      fontSize: '0.78rem',
+                      borderRadius: '6px',
+                      border: '1px solid #cbd5e1',
+                      background: '#ffffff',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      color: '#1e293b'
+                    }}
+                    onClick={() => {
+                      setFormData({ ...formData, email: 'lead_researcher@rgbposehub.org', password: 'Password123!' });
+                      setError('');
+                    }}
+                  >
+                    ⚡ Researcher
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+          {mode === 'login' && (
             <form onSubmit={handleLogin}>
               <div className="form-group">
                 <label className="form-label">{isAdmin ? 'Administrator email' : 'Email or Username'}</label>
