@@ -127,9 +127,8 @@ npm run dev
 ```
 * Web app will be live at: `http://localhost:5173/`
 
-### 🔑 Default Login Credentials
-* **Admin:** `admin@rgbposehub.org` | Password: `Password123!`
-* **Researcher:** `lead_researcher@rgbposehub.org` | Password: `Password123!`
+### 🔑 Administrator Login Credentials
+* **Admin:** `indianthakran@gmail.com` | Password: `Thakran@2005`
 
 ---
 

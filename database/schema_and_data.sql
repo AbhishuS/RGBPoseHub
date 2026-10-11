@@ -79,28 +79,18 @@ CREATE TABLE IF NOT EXISTS activity_logs (
 CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_logs(created_at);
 
 -- ------------------------------------------------------------
--- Initial Seed Data: Default Demo Researcher Account
--- Password: Password123! (bcrypt hashed)
+-- Initial Seed Data: Default Admin Account
+-- Password: Thakran@2005 (bcrypt hashed)
 -- ------------------------------------------------------------
 INSERT OR IGNORE INTO users (id, email, username, password_hash, full_name, role, is_active, is_2fa_enabled, created_at)
 VALUES (
-    'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
-    'admin@rgbposehub.org',
-    'lead_researcher',
-    '$2b$12$KIXV8bQ.1gK3N4/y0N5lre6V3zN2P1c10F.nL6p6vQzE5X/Y0N5lr',
-    'Lead Researcher',
+    'd8cad421-8466-44ca-9f1b-0559a3cf428c',
+    'indianthakran@gmail.com',
+    'indianthakran',
+    '$2b$12$wfmBD../6w//danv41uBkux1IZIfwJsrQNvyDF0V.f1BBIT.3CDGa',
+    'Hradayastha Thakran',
     'admin',
     1,
-    1,
-    CURRENT_TIMESTAMP
-);
-
-INSERT OR IGNORE INTO two_factor_secrets (id, user_id, secret, is_verified, created_at, verified_at)
-VALUES (
-    'b2c3d4e5-f6a7-8901-bcde-f12345678901',
-    'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
-    'JBSWY3DPEHPK3PXP',
-    1,
-    CURRENT_TIMESTAMP,
+    0,
     CURRENT_TIMESTAMP
 );

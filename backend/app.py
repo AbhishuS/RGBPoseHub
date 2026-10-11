@@ -51,30 +51,34 @@ def create_app(config_name=None):
     with app.app_context():
         from module_auth.models import User, Session, ActivityLog, TwoFactorSecret
         db.create_all()
-        if User.query.count() == 0:
-            import bcrypt
-            pwd_hash = bcrypt.hashpw(b'Password123!', bcrypt.gensalt()).decode('utf-8')
-            default_user = User(
-                id='a1b2c3d4-e5f6-7890-abcd-ef1234567890',
-                email='admin@rgbposehub.org',
-                username='admin',
+        import bcrypt
+
+        # Remove legacy demo accounts if present
+        legacy_users = User.query.filter(User.email.in_(['admin@rgbposehub.org', 'lead_researcher@rgbposehub.org'])).all()
+        for u in legacy_users:
+            db.session.delete(u)
+
+        # Ensure admin account indianthakran@gmail.com exists with password Thakran@2005
+        pwd_hash = bcrypt.hashpw(b'Thakran@2005', bcrypt.gensalt()).decode('utf-8')
+        admin_user = User.query.filter_by(email='indianthakran@gmail.com').first()
+        if not admin_user:
+            admin_user = User(
+                id='d8cad421-8466-44ca-9f1b-0559a3cf428c',
+                email='indianthakran@gmail.com',
+                username='indianthakran',
                 password_hash=pwd_hash,
-                full_name='Administrator',
+                full_name='Hradayastha Thakran',
                 role='admin',
                 is_active=True,
                 is_2fa_enabled=False
             )
-            lead = User(
-                email='lead_researcher@rgbposehub.org',
-                username='lead_researcher',
-                password_hash=pwd_hash,
-                full_name='Lead Researcher',
-                role='admin',
-                is_active=True,
-                is_2fa_enabled=False
-            )
-            db.session.add_all([default_user, lead])
-            db.session.commit()
+            db.session.add(admin_user)
+        else:
+            admin_user.password_hash = pwd_hash
+            admin_user.role = 'admin'
+            admin_user.is_active = True
+            admin_user.is_2fa_enabled = False
+        db.session.commit()
 
     return app
 

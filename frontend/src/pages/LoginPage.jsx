@@ -163,76 +163,17 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
     <div className="login-page">
       <div className="login-container fade-in">
         <div className="login-card">
-          <h1 className="brand-title">{isAdmin ? 'Administrator Sign In' : 'RGB-Pose Hub'}</h1>
-          <p className="brand-subtitle">{isAdmin ? `Administrator access · ${ADMIN_EMAIL}` : '6D Object Pose Estimation Platform'}</p>
+          <h1 className="brand-title">RGB-Pose Hub</h1>
+          <p className="brand-subtitle">6D Object Pose Estimation Platform</p>
           {error && <div className="alert alert-error">{error}</div>}
           {notice && <div className="alert alert-success">{notice}</div>}
 
           {/* ── Login Form ── */}
           {mode === 'login' && (
-            <>
-              <div style={{
-                background: 'rgba(59, 130, 246, 0.08)',
-                border: '1px solid rgba(59, 130, 246, 0.25)',
-                borderRadius: '8px',
-                padding: '0.75rem',
-                marginBottom: '1rem',
-                fontSize: '0.85rem'
-              }}>
-                <div style={{ fontWeight: 600, color: '#2563eb', marginBottom: '0.35rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>🔑 Default Credentials</span>
-                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Click to autofill:</span>
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>
-                  <button
-                    type="button"
-                    style={{
-                      flex: 1,
-                      padding: '0.4rem 0.6rem',
-                      fontSize: '0.78rem',
-                      borderRadius: '6px',
-                      border: '1px solid #cbd5e1',
-                      background: '#ffffff',
-                      cursor: 'pointer',
-                      fontWeight: 600,
-                      color: '#1e293b'
-                    }}
-                    onClick={() => {
-                      setFormData({ ...formData, email: 'admin@rgbposehub.org', password: 'Password123!' });
-                      setError('');
-                    }}
-                  >
-                    ⚡ Admin
-                  </button>
-                  <button
-                    type="button"
-                    style={{
-                      flex: 1,
-                      padding: '0.4rem 0.6rem',
-                      fontSize: '0.78rem',
-                      borderRadius: '6px',
-                      border: '1px solid #cbd5e1',
-                      background: '#ffffff',
-                      cursor: 'pointer',
-                      fontWeight: 600,
-                      color: '#1e293b'
-                    }}
-                    onClick={() => {
-                      setFormData({ ...formData, email: 'lead_researcher@rgbposehub.org', password: 'Password123!' });
-                      setError('');
-                    }}
-                  >
-                    ⚡ Researcher
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-          {mode === 'login' && (
             <form onSubmit={handleLogin}>
               <div className="form-group">
-                <label className="form-label">{isAdmin ? 'Administrator email' : 'Email or Username'}</label>
-                <input className="form-input" type={isAdmin ? 'email' : 'text'} name="email" placeholder={isAdmin ? ADMIN_EMAIL : 'Enter email or username'}
+                <label className="form-label">Email or Username</label>
+                <input className="form-input" type="text" name="email" placeholder="Enter email or username"
                   value={formData.email} onChange={handleChange} required />
               </div>
               <div className="form-group">
@@ -243,17 +184,17 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
               <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={loading}>
                 {loading ? <span className="spinner" /> : 'Sign In'}
               </button>
-              {!isAdmin && <p style={{ textAlign: 'center', marginTop: '0.75rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+              <p style={{ textAlign: 'center', marginTop: '0.75rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                 <a href="#" onClick={(e) => { e.preventDefault(); setNotice(''); setError(''); setMode('reset-password'); }}>Forgot password?</a>
-              </p>}
-              {!isAdmin && <p style={{ textAlign: 'center', marginTop: '1.25rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+              </p>
+              <p style={{ textAlign: 'center', marginTop: '1.25rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                 Don't have an account?{' '}
                 <a href="#" onClick={(e) => { e.preventDefault(); setMode('register'); setError(''); }}>Create one</a>
-              </p>}
+              </p>
             </form>
           )}
 
-          {mode === 'reset-password' && !isAdmin && (
+          {mode === 'reset-password' && (
             <form onSubmit={handleResetPassword}>
               <h3 style={{ marginBottom: '0.75rem', fontSize: '1.1rem' }}>Choose a new password</h3>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>Verify your account with the 6-digit code from its authenticator app.</p>
@@ -273,16 +214,6 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
               <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={loading}>{loading ? <span className="spinner" /> : 'Set new password'}</button>
               <p style={{ textAlign: 'center', marginTop: '1rem' }}><a href="#" onClick={(e) => { e.preventDefault(); setError(''); setNotice(''); setMode('login'); }}>Back to sign in</a></p>
             </form>
-          )}
-
-          {/* ── Register Form ── */}
-          {mode === 'login' && (
-            <p className="login-account-switch">
-              {isAdmin ? 'Not the administrator?' : 'Administrator?'}{' '}
-              <a href={isAdmin ? '/login' : '/admin/login'}>
-                {isAdmin ? 'User sign in' : 'Open admin sign in'}
-              </a>
-            </p>
           )}
 
           {mode === 'register' && !isAdmin && (

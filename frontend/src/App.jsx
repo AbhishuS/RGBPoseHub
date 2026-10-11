@@ -14,12 +14,12 @@ import ProjectHeader from './components/ProjectHeader';
 import { isAdminUser, normalizeUserRole } from './utils/auth';
 import './styles/index.css';
 
-function LoginScreen({ onLogin, isAdmin }) {
+function LoginScreen({ onLogin }) {
   return (
     <div className="auth-screen" style={{ position: 'relative', width: '100%', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <LiquidChrome />
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <LoginPage onLogin={onLogin} isAdmin={isAdmin} />
+        <LoginPage onLogin={onLogin} />
       </div>
       <footer className="site-legal-footer">
         <span>&copy; {new Date().getFullYear()} RGB PoseHub</span>
@@ -59,8 +59,8 @@ export default function App() {
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/about" element={<AboutPage />} />
-            <Route path="/login" element={<LoginScreen onLogin={handleLogin} isAdmin={false} />} />
-            <Route path="/admin/login" element={<LoginScreen onLogin={handleLogin} isAdmin />} />
+            <Route path="/login" element={<LoginScreen onLogin={handleLogin} />} />
+            <Route path="/admin/login" element={<Navigate to="/login" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </>
