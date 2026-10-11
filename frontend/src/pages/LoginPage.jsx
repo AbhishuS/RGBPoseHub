@@ -235,6 +235,10 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
 
           {mode === 'register' && !isAdmin && (
             <form onSubmit={handleRegister}>
+              <div style={{ background: 'rgba(23,103,210,0.08)', border: '1px solid rgba(23,103,210,0.25)', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1.25rem' }}>
+                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--accent-primary)', fontWeight: 600 }}>📱 You will need a TOTP authenticator app</p>
+                <p style={{ margin: '0.3rem 0 0', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Download <strong>Google Authenticator</strong>, <strong>Authy</strong>, or <strong>Microsoft Authenticator</strong> before completing registration. You will scan a QR code to set up two-factor authentication.</p>
+              </div>
               <div className="form-group">
                 <label className="form-label">Full Name</label>
                 <input className="form-input" type="text" name="full_name" placeholder="Your full name"
@@ -256,7 +260,7 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
                   value={formData.password} onChange={handleChange} required minLength={8} />
               </div>
               <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={loading}>
-                {loading ? <span className="spinner" /> : 'Create Account'}
+                {loading ? <span className="spinner" /> : 'Create Account & Set Up 2FA'}
               </button>
               <p style={{ textAlign: 'center', marginTop: '1.25rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                 Already have an account?{' '}
@@ -295,25 +299,14 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
           {/* ── 2FA Login Verification ── */}
           {mode === '2fa-login' && (
             <div style={{ textAlign: 'center' }}>
-              <h3 style={{ marginBottom: '0.75rem', fontSize: '1.1rem' }}>Two-Factor Verification</h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-                Enter the 6-digit code from your authenticator app:
+              <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🔐</div>
+              <h3 style={{ marginBottom: '0.5rem', fontSize: '1.1rem' }}>Two-Factor Verification</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1.25rem', lineHeight: 1.5 }}>
+                Open your authenticator app (<strong>Google Authenticator</strong>, Authy, etc.) and enter the 6-digit code for <strong>RGB-Pose Hub</strong>.
               </p>
-              {twoFAData && (
-                <div style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: '10px', padding: '0.75rem', marginBottom: '1rem' }}>
-                  {twoFAData.qr_code && (
-                    <div style={{ display: 'inline-block', padding: '0.5rem', background: '#fff', borderRadius: '8px', marginBottom: '0.5rem' }}>
-                      <img src={`data:image/png;base64,${twoFAData.qr_code}`} alt="2FA QR Code" style={{ width: '130px', height: '130px' }} />
-                    </div>
-                  )}
-                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
-                    Authenticator Key: <code style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>{twoFAData.secret}</code>
-                  </p>
-                </div>
-              )}
               <div className="otp-inputs">
                 {otpCode.map((digit, i) => (
-                  <input key={i} id={`otp-${i}`} className="otp-input" type="text" maxLength={1}
+                  <input key={i} id={`otp-${i}`} className="otp-input" type="text" inputMode="numeric" maxLength={1}
                     value={digit} onChange={(e) => handleOtpChange(i, e.target.value)}
                     onKeyDown={(e) => handleOtpKeyDown(i, e)} autoFocus={i === 0} />
                 ))}

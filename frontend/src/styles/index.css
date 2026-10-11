@@ -10,6 +10,8 @@
   --bg-card-hover:   #fcfcfd;
   --bg-input:        #ffffff;
   --border-color:    #dcecf2;
+  --border:          #dcecf2;
+  --code-bg:         #f8fafc;
   --border-hover:    #a8d5e5;
   --border-focus:    #5bb8da;
 
@@ -347,9 +349,10 @@ img { max-width: 100%; display: block; }
   font-size: 1.5rem;
   font-weight: 800;
   letter-spacing: -0.03em;
+  color: #14283e;
 }
 .page-header p {
-  color: var(--text-muted);
+  color: #526374;
   margin-top: 2px;
   font-size: 0.875rem;
 }

@@ -513,9 +513,9 @@ export default function AnalysisPage() {
 
   return (
     <div className="fade-in">
-      <div className="page-header">
-        <h2>Image Forensics & Pose Estimation Hub</h2>
-        <p>Multi-category forensic inspection workbench with heatmaps, bit-planes, EXIF, and RGB-D pose estimation</p>
+      <div className="page-header" style={{ borderBottomColor: 'rgba(23, 105, 210, 0.12)' }}>
+        <h2 style={{ color: '#0f2b48', fontWeight: 800 }}>Image Forensics & Pose Estimation Hub</h2>
+        <p style={{ color: '#526374' }}>Multi-category forensic inspection workbench with heatmaps, bit-planes, EXIF, and RGB-D pose estimation</p>
       </div>
 
       <div className="page-body">
@@ -547,7 +547,16 @@ export default function AnalysisPage() {
                   {/* Panel 1: Main RGB/RGBD Image */}
                   <div
                     className={`upload-zone ${dragover ? 'dragover' : ''}`}
-                    style={{ minHeight: '220px', position: 'relative' }}
+                    style={{
+                      minHeight: '230px',
+                      position: 'relative',
+                      background: 'linear-gradient(135deg, rgba(235, 248, 255, 0.75) 0%, rgba(255, 255, 255, 0.95) 100%)',
+                      border: '2px dashed rgba(23, 105, 210, 0.35)',
+                      borderRadius: '16px',
+                      boxShadow: '0 4px 20px rgba(23, 105, 210, 0.04)',
+                      transition: 'all 0.25s ease',
+                      cursor: 'pointer',
+                    }}
                     onDragOver={(e) => { e.preventDefault(); setDragover(true); }}
                     onDragLeave={() => setDragover(false)}
                     onDrop={(e) => {
@@ -560,20 +569,20 @@ export default function AnalysisPage() {
                     {preview ? (
                       <div style={{ textAlign: 'center' }}>
                         {preview === 'pdf-document' ? (
-                          <div style={{ padding: '0.8rem', background: 'rgba(239, 68, 68, 0.08)', borderRadius: '8px', border: '1px solid #ef4444', display: 'inline-block', marginBottom: '0.5rem' }}>
+                          <div style={{ padding: '0.8rem', background: 'rgba(239, 68, 68, 0.08)', borderRadius: '10px', border: '1px solid #ef4444', display: 'inline-block', marginBottom: '0.5rem' }}>
                             <div style={{ fontSize: '2.5rem' }}>📄</div>
-                            <span style={{ fontSize: '0.8rem', color: '#ef4444', fontWeight: 600 }}>PDF Document (RGB Imagery)</span>
+                            <span style={{ fontSize: '0.8rem', color: '#dc2626', fontWeight: 700 }}>PDF Document (RGB Imagery)</span>
                           </div>
                         ) : (
-                          <img src={preview} alt="Selected" style={{ maxHeight: '140px', borderRadius: '8px', marginBottom: '0.5rem' }} />
+                          <img src={preview} alt="Selected" style={{ maxHeight: '140px', borderRadius: '10px', marginBottom: '0.5rem', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
                         )}
-                        <p style={{ fontSize: '0.85rem', color: '#10b981', margin: 0 }}>✓ {selectedFile?.name}</p>
+                        <p style={{ fontSize: '0.85rem', color: '#059669', fontWeight: 600, margin: 0 }}>✓ {selectedFile?.name}</p>
                       </div>
                     ) : (
                       <>
-                        <div className="upload-icon">🖼️</div>
-                        <p><strong>Drop your RGB image or PDF here</strong> or click to browse</p>
-                        <p className="upload-hint">Color photo: JPG, PNG, TIFF, <strong>HEIC</strong> &amp; <strong>PDF</strong> • Max 20 MB</p>
+                        <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: 'rgba(23, 105, 210, 0.1)', display: 'grid', placeItems: 'center', fontSize: '1.5rem', margin: '0 auto 0.75rem' }}>🖼️</div>
+                        <p style={{ margin: '0 0 0.35rem', color: '#0f2b48', fontSize: '0.95rem' }}><strong style={{ color: '#0f2b48' }}>Drop your RGB image or PDF here</strong> or click to browse</p>
+                        <p className="upload-hint" style={{ color: '#64748b' }}>Color photo: JPG, PNG, TIFF, <strong style={{ color: '#334155' }}>HEIC</strong> &amp; <strong style={{ color: '#334155' }}>PDF</strong> • Max 20 MB</p>
                       </>
                     )}
                     <input
@@ -592,10 +601,15 @@ export default function AnalysisPage() {
                   <div
                     className="upload-zone"
                     style={{
-                      minHeight: '220px',
-                      borderStyle: 'dashed',
-                      borderColor: selectedDepthFile ? '#10b981' : 'var(--border)',
-                      background: selectedDepthFile ? 'rgba(16,185,129,0.05)' : 'rgba(255,255,255,0.02)',
+                      minHeight: '230px',
+                      position: 'relative',
+                      border: selectedDepthFile ? '2px solid #10b981' : '2px dashed rgba(16, 185, 129, 0.35)',
+                      borderRadius: '16px',
+                      background: selectedDepthFile
+                        ? 'linear-gradient(135deg, rgba(236, 253, 245, 0.85) 0%, rgba(255, 255, 255, 0.95) 100%)'
+                        : 'linear-gradient(135deg, rgba(240, 253, 250, 0.65) 0%, rgba(255, 255, 255, 0.9) 100%)',
+                      boxShadow: '0 4px 20px rgba(16, 185, 129, 0.04)',
+                      transition: 'all 0.25s ease',
                       cursor: 'pointer',
                     }}
                     onDragOver={(e) => { e.preventDefault(); }}
@@ -605,27 +619,30 @@ export default function AnalysisPage() {
                     }}
                     onClick={() => depthInputRef.current?.click()}
                   >
+                    <div style={{ position: 'absolute', top: '12px', right: '12px', background: 'rgba(16, 185, 129, 0.12)', color: '#059669', fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.55rem', borderRadius: '999px', letterSpacing: '0.04em' }}>
+                      OPTIONAL SENSOR
+                    </div>
                     {selectedDepthFile ? (
                       <div style={{ textAlign: 'center' }}>
                         {depthPreview === 'pdf-document' ? (
-                          <div style={{ padding: '0.5rem', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '6px', border: '1px solid #3b82f6', display: 'inline-block', marginBottom: '0.5rem' }}>
+                          <div style={{ padding: '0.6rem', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '8px', border: '1px solid #3b82f6', display: 'inline-block', marginBottom: '0.5rem' }}>
                             <div style={{ fontSize: '2rem' }}>📄</div>
-                            <span style={{ fontSize: '0.75rem', color: '#3b82f6', fontWeight: 600 }}>PDF Depth Map</span>
+                            <span style={{ fontSize: '0.75rem', color: '#2563eb', fontWeight: 600 }}>PDF Depth Map</span>
                           </div>
                         ) : depthPreview ? (
-                          <img src={depthPreview} alt="Depth" style={{ maxHeight: '120px', borderRadius: '8px', marginBottom: '0.5rem', filter: 'grayscale(1) contrast(1.5)' }} />
+                          <img src={depthPreview} alt="Depth" style={{ maxHeight: '120px', borderRadius: '8px', marginBottom: '0.5rem', filter: 'grayscale(1) contrast(1.5)', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
                         ) : null}
-                        <p style={{ fontSize: '0.85rem', color: '#10b981', margin: 0 }}>✓ Depth: {selectedDepthFile.name}</p>
+                        <p style={{ fontSize: '0.85rem', color: '#059669', fontWeight: 600, margin: 0 }}>✓ Depth: {selectedDepthFile.name}</p>
                         <button
-                          className="btn btn-sm" style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#ef4444' }}
+                          className="btn btn-sm" style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#dc2626', background: 'rgba(220, 38, 38, 0.08)', border: '1px solid rgba(220, 38, 38, 0.2)' }}
                           onClick={(e) => { e.stopPropagation(); setSelectedDepthFile(null); setDepthPreview(null); }}
                         >✕ Remove</button>
                       </div>
                     ) : (
                       <>
-                        <div style={{ fontSize: '2rem', marginBottom: '0.5rem', opacity: 0.6 }}>📏</div>
-                        <p style={{ margin: '0 0 0.35rem' }}><strong>Drop depth map here</strong> (optional)</p>
-                        <p className="upload-hint">Depth map: JPG, PNG, or uint16 TIFF (0.3m – 3.0m metric)</p>
+                        <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.1)', display: 'grid', placeItems: 'center', fontSize: '1.4rem', margin: '0 auto 0.75rem' }}>📏</div>
+                        <p style={{ margin: '0 0 0.35rem', color: '#064e3b', fontSize: '0.95rem' }}><strong style={{ color: '#064e3b' }}>Drop depth map here</strong> (optional)</p>
+                        <p className="upload-hint" style={{ color: '#64748b' }}>Depth map: JPG, PNG, or uint16 TIFF (0.3m – 3.0m metric)</p>
                       </>
                     )}
                     <input
@@ -642,9 +659,9 @@ export default function AnalysisPage() {
                 </div>
 
                 {/* Action Buttons */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: '1rem', padding: '1rem', background: 'var(--code-bg)', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: '1rem', padding: '1rem 1.25rem', background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.85) 0%, rgba(240, 249, 255, 0.75) 100%)', borderRadius: '14px', border: '1px solid rgba(23, 105, 210, 0.15)', boxShadow: '0 4px 16px rgba(23, 73, 111, 0.04)', backdropFilter: 'blur(12px)' }}>
                   {!selectedFile && (
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginRight: 'auto' }}>
+                    <span style={{ fontSize: '0.85rem', color: '#475569', marginRight: 'auto', fontWeight: 500 }}>
                       ⬆ Upload an RGB image on the left to begin. Depth map (right) is optional.
                     </span>
                   )}
@@ -659,33 +676,33 @@ export default function AnalysisPage() {
                 </div>
 
                 {/* Quick Educational Guide: What is Depth Map? */}
-                <div style={{ marginTop: '1rem', padding: '1rem 1.25rem', background: 'rgba(59, 130, 246, 0.05)', borderRadius: '10px', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
-                    <span style={{ fontSize: '1.1rem' }}>💡</span>
-                    <strong style={{ fontSize: '0.88rem', color: '#60a5fa' }}>What is a Depth Map & How to provide it?</strong>
+                <div style={{ marginTop: '1.25rem', padding: '1.1rem 1.35rem', background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.85) 0%, rgba(240, 248, 255, 0.8) 100%)', borderRadius: '14px', border: '1px solid rgba(23, 105, 210, 0.18)', boxShadow: '0 4px 18px rgba(23, 73, 111, 0.04)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.65rem' }}>
+                    <span style={{ fontSize: '1.2rem' }}>💡</span>
+                    <strong style={{ fontSize: '0.92rem', color: '#0f2b48', fontWeight: 800, letterSpacing: '-0.01em' }}>What is a Depth Map & How to provide it?</strong>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.75rem', marginTop: '0.5rem', fontSize: '0.8rem', color: '#94a3b8' }}>
-                    <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '0.6rem 0.8rem', borderRadius: '6px' }}>
-                      <strong style={{ color: '#f8fafc', display: 'block', marginBottom: '0.2rem' }}>1. What is Depth (Z)?</strong>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.85rem', marginTop: '0.5rem', fontSize: '0.82rem' }}>
+                    <div style={{ background: 'rgba(255, 255, 255, 0.95)', padding: '0.85rem 1rem', borderRadius: '10px', border: '1px solid rgba(23, 105, 210, 0.12)', boxShadow: '0 2px 8px rgba(23, 105, 210, 0.04)', color: '#475569', lineHeight: 1.55 }}>
+                      <strong style={{ color: '#0f2b48', display: 'block', marginBottom: '0.25rem', fontSize: '0.86rem' }}>1. What is Depth (Z)?</strong>
                       Standard photos only have 2D color (X, Y). A Depth Map assigns the real-world distance (e.g. 1.2 meters) to each pixel so 3D spatial pose can be calculated.
                     </div>
-                    <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '0.6rem 0.8rem', borderRadius: '6px' }}>
-                      <strong style={{ color: '#f8fafc', display: 'block', marginBottom: '0.2rem' }}>2. From iPhone / RealSense</strong>
-                      Shoot in Portrait mode on iPhone or use apps like <em>Record3D</em> / <em>Focos</em> to export the grayscale depth image, then drop it in the 2nd box.
+                    <div style={{ background: 'rgba(255, 255, 255, 0.95)', padding: '0.85rem 1rem', borderRadius: '10px', border: '1px solid rgba(23, 105, 210, 0.12)', boxShadow: '0 2px 8px rgba(23, 105, 210, 0.04)', color: '#475569', lineHeight: 1.55 }}>
+                      <strong style={{ color: '#0f2b48', display: 'block', marginBottom: '0.25rem', fontSize: '0.86rem' }}>2. From iPhone / RealSense</strong>
+                      Shoot in Portrait mode on iPhone or use apps like <em style={{ color: '#1767d2' }}>Record3D</em> / <em style={{ color: '#1767d2' }}>Focos</em> to export the grayscale depth image, then drop it in the 2nd box.
                     </div>
-                    <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '0.6rem 0.8rem', borderRadius: '6px' }}>
-                      <strong style={{ color: '#f8fafc', display: 'block', marginBottom: '0.2rem' }}>3. Standard 2D Photos (No Sensor)</strong>
+                    <div style={{ background: 'rgba(255, 255, 255, 0.95)', padding: '0.85rem 1rem', borderRadius: '10px', border: '1px solid rgba(23, 105, 210, 0.12)', boxShadow: '0 2px 8px rgba(23, 105, 210, 0.04)', color: '#475569', lineHeight: 1.55 }}>
+                      <strong style={{ color: '#0f2b48', display: 'block', marginBottom: '0.25rem', fontSize: '0.86rem' }}>3. Standard 2D Photos (No Sensor)</strong>
                       A normal 2D photo has no measured distance data. It can be inspected as RGB, but pose estimation needs a separate uint16 PNG/TIFF depth map measured in millimeters.
                     </div>
                   </div>
                 </div>
 
                 {/* Sample RGB-D Test Images Section */}
-                <div style={{ marginTop: '1.5rem', padding: '1.25rem', background: 'var(--code-bg)', borderRadius: '12px', border: '1px solid var(--border)' }}>
-                  <h4 style={{ margin: '0 0 0.5rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ marginTop: '1.5rem', padding: '1.25rem', background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.85) 0%, rgba(240, 248, 255, 0.8) 100%)', borderRadius: '14px', border: '1px solid rgba(23, 105, 210, 0.15)', boxShadow: '0 4px 18px rgba(23, 73, 111, 0.04)' }}>
+                  <h4 style={{ margin: '0 0 0.5rem', color: '#059669', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700 }}>
                     <span>🧪</span> Try Sample RGB-D Images (1-Click Test)
                   </h4>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                  <p style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '1rem' }}>
                     Click a sample to load its RGB image and paired uint16 depth map (millimeters) for the depth gatekeeper and pose flow:
                   </p>
 
@@ -694,7 +711,7 @@ export default function AnalysisPage() {
                       <button
                         key={s.filename}
                         className="btn btn-secondary btn-sm"
-                        style={{ border: '1px solid #10b981', color: '#10b981', background: 'rgba(16, 185, 129, 0.1)' }}
+                        style={{ border: '1px solid rgba(5, 150, 105, 0.35)', color: '#059669', background: 'rgba(5, 150, 105, 0.08)', fontWeight: 600 }}
                         onClick={() => analyzeFilename(s.filename)}
                       >
                         📷 {s.name} ({s.type})

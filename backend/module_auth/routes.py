@@ -154,20 +154,10 @@ def login():
     if user.is_2fa_enabled:
         # Return pending status — client must call /verify-2fa-login
         log_activity(user.id, 'login_password_verified', 'auth', 'Password verified, awaiting 2FA')
-        two_factor = TwoFactorSecret.query.filter_by(user_id=user.id).first()
-        secret = two_factor.secret if two_factor else None
-        qr_base64 = None
-        provisioning_uri = None
-        if secret:
-            provisioning_uri = TwoFactorAuth.get_provisioning_uri(secret, user.email)
-            qr_base64 = TwoFactorAuth.generate_qr_code_base64(provisioning_uri)
         return jsonify({
             'message': '2FA verification required',
             'requires_2fa': True,
             'user_id': user.id,
-            'two_factor_secret': secret,
-            'qr_code': qr_base64,
-            'provisioning_uri': provisioning_uri,
         }), 200
     else:
         # No 2FA — issue tokens directly
@@ -410,3 +400,91 @@ def get_user_stats():
         },
         'recent_activity': [log.to_dict() for log in recent],
     }), 200
+
+
+# ─── Admin: User Management ──────────────────────────────────
+
+def _require_admin():
+    """Return the current user if admin, else None."""
+    from flask_jwt_extended import verify_jwt_in_request
+    verify_jwt_in_request()
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user or user.role != 'admin':
+        return None
+    return user
+
+
+@auth_bp.route('/admin/users', methods=['GET'])
+@jwt_required()
+def admin_list_users():
+    """Admin: list all users with their sessions and activity history."""
+    user_id = get_jwt_identity()
+    current = User.query.get(user_id)
+    if not current or current.role != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    users = User.query.order_by(User.created_at.desc()).all()
+    result = []
+    for u in users:
+        sessions = Session.query.filter_by(user_id=u.id).order_by(Session.created_at.desc()).all()
+        activity = ActivityLog.query.filter_by(user_id=u.id).order_by(ActivityLog.created_at.desc()).limit(50).all()
+        login_history = ActivityLog.query.filter_by(user_id=u.id, action='login_success').order_by(ActivityLog.created_at.desc()).all()
+        active_sessions = sum(1 for s in sessions if s.is_active)
+        last_login_ip = None
+        if login_history:
+            last_login_ip = login_history[0].ip_address
+        row = u.to_dict()
+        row['sessions'] = [s.to_dict() for s in sessions]
+        row['activity'] = [a.to_dict() for a in activity]
+        row['login_history'] = [a.to_dict() for a in login_history]
+        row['active_sessions'] = active_sessions
+        row['last_login_ip'] = last_login_ip
+        result.append(row)
+
+    return jsonify({'users': result, 'total': len(result)}), 200
+
+
+@auth_bp.route('/admin/users/<user_id>', methods=['DELETE'])
+@jwt_required()
+def admin_delete_user(user_id):
+    """Admin: permanently delete a user account."""
+    current_id = get_jwt_identity()
+    current = User.query.get(current_id)
+    if not current or current.role != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+    if target.role == 'admin':
+        return jsonify({'error': 'Cannot delete admin account'}), 403
+
+    db.session.delete(target)
+    db.session.commit()
+    log_activity(current_id, 'admin_delete_user', 'admin', f'Deleted user {target.email}')
+    return jsonify({'message': f'User {target.email} deleted'}), 200
+
+
+@auth_bp.route('/admin/users/<user_id>/revoke-sessions', methods=['POST'])
+@jwt_required()
+def admin_revoke_user_sessions(user_id):
+    """Admin: revoke all active sessions for a user."""
+    current_id = get_jwt_identity()
+    current = User.query.get(current_id)
+    if not current or current.role != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+
+    active = Session.query.filter_by(user_id=user_id, is_active=True).all()
+    now = datetime.now(timezone.utc)
+    for s in active:
+        s.is_active = False
+        s.revoked_at = now
+    db.session.commit()
+    log_activity(current_id, 'admin_revoke_sessions', 'admin', f'Revoked {len(active)} sessions for {target.email}')
+    return jsonify({'message': f'Revoked {len(active)} active session(s)', 'revoked': len(active)}), 200
+

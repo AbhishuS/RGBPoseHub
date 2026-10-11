@@ -43,7 +43,12 @@ export const authAPI = {
   getSessions: () => api.get('/auth/sessions'),
   revokeSession: (id) => api.post(`/auth/sessions/${id}/revoke`),
   getStats: () => api.get('/auth/stats'),
+  // Admin user management
+  getAdminUsers: () => api.get('/auth/admin/users'),
+  deleteAdminUser: (id) => api.delete(`/auth/admin/users/${id}`),
+  revokeAdminUserSessions: (id) => api.post(`/auth/admin/users/${id}/revoke-sessions`),
 };
+
 
 // ─── Data API ──────────────────────────────
 export const dataAPI = {
