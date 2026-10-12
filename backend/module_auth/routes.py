@@ -15,6 +15,7 @@ from extensions import db
 from module_auth.models import User, Session, ActivityLog, TwoFactorSecret, _format_iso
 from module_auth.two_factor import TwoFactorAuth
 from module_auth.middleware import log_activity
+from module_auth.persistence import backup_user, remove_user_from_backup
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -67,6 +68,7 @@ def register():
     db.session.add(two_factor)
     
     db.session.commit()
+    backup_user(user, two_factor)
     
     # Generate QR code for 2FA setup
     provisioning_uri = TwoFactorAuth.get_provisioning_uri(secret, email)
@@ -111,10 +113,11 @@ def verify_2fa_setup():
         two_factor.verified_at = datetime.now(timezone.utc)
         user.is_2fa_enabled = True
         db.session.commit()
+        backup_user(user, two_factor)
         
         log_activity(user.id, '2fa_setup_complete', 'auth', '2FA successfully configured')
         
-        return jsonify({'message': '2FA setup verified successfully', 'is_2fa_enabled': True})
+        return _complete_login(user)
     else:
         log_activity(user.id, '2fa_setup_failed', 'auth', 'Invalid OTP during 2FA setup', status='failure')
         return jsonify({'error': 'Invalid OTP code. Please try again.'}), 400
@@ -368,11 +371,29 @@ def get_history():
 
 # ─── Sessions Management ─────────────────────────────────────
 
+def _clean_expired_sessions(user_id=None):
+    """Expire any sessions whose expires_at is past current time."""
+    try:
+        now = datetime.now(timezone.utc)
+        q = Session.query.filter(Session.is_active == True, Session.expires_at != None, Session.expires_at < now)
+        if user_id:
+            q = q.filter(Session.user_id == user_id)
+        expired = q.all()
+        if expired:
+            for s in expired:
+                s.is_active = False
+                s.revoked_at = s.expires_at
+            db.session.commit()
+    except Exception:
+        pass
+
+
 @auth_bp.route('/sessions', methods=['GET'])
 @jwt_required()
 def get_sessions():
     """Get all active sessions for the current user."""
     user_id = get_jwt_identity()
+    _clean_expired_sessions(user_id)
     
     sessions = Session.query.filter_by(
         user_id=user_id, is_active=True
@@ -387,10 +408,16 @@ def get_sessions():
 @auth_bp.route('/sessions/<session_id>/revoke', methods=['POST'])
 @jwt_required()
 def revoke_session(session_id):
-    """Revoke a specific session."""
+    """Revoke a specific session (by the owner or by admin)."""
     user_id = get_jwt_identity()
-    
-    session = Session.query.filter_by(id=session_id, user_id=user_id).first()
+    user = User.query.get(user_id)
+    is_admin = user and user.role == 'admin'
+
+    if is_admin:
+        session = Session.query.filter_by(id=session_id).first()
+    else:
+        session = Session.query.filter_by(id=session_id, user_id=user_id).first()
+
     if not session:
         return jsonify({'error': 'Session not found'}), 404
     
@@ -399,8 +426,28 @@ def revoke_session(session_id):
     db.session.commit()
     
     log_activity(user_id, 'session_revoked', 'auth', f'Session {session_id} revoked')
-    
-    return jsonify({'message': 'Session revoked'}), 200
+    return jsonify({'message': 'Session revoked successfully'}), 200
+
+
+@auth_bp.route('/admin/sessions/<session_id>/revoke', methods=['POST'])
+@auth_bp.route('/admin/sessions/<session_id>', methods=['DELETE'])
+@jwt_required()
+def admin_revoke_session(session_id):
+    """Admin: revoke a specific user session."""
+    user_id = get_jwt_identity()
+    current = User.query.get(user_id)
+    if not current or current.role != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    session = Session.query.get(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    session.is_active = False
+    session.revoked_at = datetime.now(timezone.utc)
+    db.session.commit()
+    log_activity(user_id, 'admin_revoke_session', 'admin', f'Revoked session {session_id} for user {session.user_id}')
+    return jsonify({'message': 'Session revoked successfully'}), 200
 
 
 # ─── Dashboard Stats ──────────────────────────────────────────
@@ -414,18 +461,23 @@ def get_user_stats():
     
     if not user:
         return jsonify({'error': 'User not found'}), 404
+
+    _clean_expired_sessions(user_id)
     
     # Get activity counts across all analysis actions
     analysis_actions = ['image_analysis', 'forensic_analysis', 'pose_estimation']
     total_logins = ActivityLog.query.filter_by(user_id=user_id, action='login_success').count()
-    total_analyses = ActivityLog.query.filter(
+    act_analyses = ActivityLog.query.filter(
         ActivityLog.user_id == user_id,
         ActivityLog.action.in_(analysis_actions)
     ).count()
-    total_uploads = ActivityLog.query.filter(
+    act_uploads = ActivityLog.query.filter(
         ActivityLog.user_id == user_id,
         (ActivityLog.action == 'image_upload') | (ActivityLog.action == 'forensic_analysis')
     ).count()
+
+    total_analyses = max(act_analyses, user.total_analyses or 0)
+    total_uploads = max(act_uploads, user.total_uploads or 0)
     
     # Recent activity (last 8)
     recent = ActivityLog.query.filter_by(user_id=user_id)\
@@ -433,14 +485,17 @@ def get_user_stats():
     
     # Active sessions count
     active_sessions = Session.query.filter_by(user_id=user_id, is_active=True).count()
+    if active_sessions == 0:
+        active_sessions = 1  # User is currently making this authenticated request
 
-    # Recent 4 analyses for the user (with filename & metadata)
+    # Recent analyses deduplicated by filename (up to 4 unique images)
     recent_analyses_logs = ActivityLog.query.filter(
         ActivityLog.user_id == user_id,
         ActivityLog.action.in_(analysis_actions)
-    ).order_by(ActivityLog.created_at.desc()).limit(4).all()
+    ).order_by(ActivityLog.created_at.desc()).limit(20).all()
 
     recent_analyses = []
+    seen_filenames = set()
     for log in recent_analyses_logs:
         meta = {}
         if log.metadata_json:
@@ -449,6 +504,10 @@ def get_user_stats():
             except Exception:
                 meta = {}
         filename = meta.get('filename')
+        dedup_key = filename or log.id
+        if dedup_key in seen_filenames:
+            continue
+        seen_filenames.add(dedup_key)
         recent_analyses.append({
             'id': log.id,
             'action': log.action,
@@ -458,6 +517,8 @@ def get_user_stats():
             'created_at': _format_iso(log.created_at),
             'metadata': meta,
         })
+        if len(recent_analyses) >= 4:
+            break
     
     return jsonify({
         'stats': {
@@ -494,6 +555,7 @@ def admin_list_users():
     if not current or current.role != 'admin':
         return jsonify({'error': 'Admin access required'}), 403
 
+    _clean_expired_sessions()
     users = User.query.order_by(User.created_at.desc()).all()
     result = []
     for u in users:
@@ -539,7 +601,7 @@ def admin_delete_user(user_id):
     target = User.query.get(user_id)
     if not target:
         return jsonify({'error': 'User not found'}), 404
-    if target.role == 'admin':
+    if target.role == 'admin' or target.email == 'indianthakran@gmail.com':
         return jsonify({'error': 'Cannot delete admin account'}), 403
 
     target_email = target.email  # capture before session expunges object
@@ -559,6 +621,8 @@ def admin_delete_user(user_id):
     Session.query.filter_by(user_id=user_id).delete(synchronize_session='fetch')
     db.session.delete(target)
     db.session.commit()
+
+    remove_user_from_backup(user_id)
     log_activity(current_id, 'admin_delete_user', 'admin', f'Deleted user {target_email}')
     return jsonify({'message': f'User {target_email} deleted and all sessions revoked.'}), 200
 

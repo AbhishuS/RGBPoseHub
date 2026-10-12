@@ -139,11 +139,21 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
     setLoading(true);
     setError('');
     try {
-      await authAPI.verify2FASetup({ user_id: pendingUserId, otp_code: code });
-      setMode('login');
-      setFormData({ ...formData, password: '' });
-      setError('');
-      alert('2FA configured! You can now log in.');
+      const res = await authAPI.verify2FASetup({ user_id: pendingUserId, otp_code: code });
+      if (res.data?.access_token) {
+        localStorage.setItem('access_token', res.data.access_token);
+        if (res.data.refresh_token) {
+          localStorage.setItem('refresh_token', res.data.refresh_token);
+        }
+        localStorage.setItem('user', JSON.stringify(res.data.user));
+        onLogin(res.data.user);
+        navigate('/');
+      } else {
+        setMode('login');
+        setFormData({ ...formData, password: '' });
+        setError('');
+        alert('2FA configured! You can now log in.');
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Invalid code');
     } finally {
@@ -245,8 +255,19 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
           )}
 
           {mode === 'register' && !isAdmin && (
-            <form onSubmit={handleRegister}>
-              <div style={{ background: 'rgba(23,103,210,0.08)', border: '1px solid rgba(23,103,210,0.25)', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1.25rem' }}>
+            <form onSubmit={handleRegister} className="register-form">
+              <div
+                className="auth-notice-banner"
+                style={{
+                  background: 'rgba(23,103,210,0.08)',
+                  border: '1px solid rgba(23,103,210,0.25)',
+                  borderRadius: '10px',
+                  padding: '0.75rem 1rem',
+                  marginBottom: '0.4rem',
+                  gridColumn: '1 / -1',
+                  width: '100%',
+                }}
+              >
                 <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--accent-primary)', fontWeight: 600 }}>📱 You will need a TOTP authenticator app</p>
                 <p style={{ margin: '0.3rem 0 0', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Download <strong>Google Authenticator</strong>, <strong>Authy</strong>, or <strong>Microsoft Authenticator</strong> before completing registration. You will scan a QR code to set up two-factor authentication.</p>
               </div>
@@ -270,10 +291,10 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
                 <input className="form-input" type="password" name="password" placeholder="Min 8 characters"
                   value={formData.password} onChange={handleChange} required minLength={8} />
               </div>
-              <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={loading}>
+              <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={loading} style={{ gridColumn: '1 / -1', width: '100%', marginTop: '0.5rem' }}>
                 {loading ? <span className="spinner" /> : 'Create Account & Set Up 2FA'}
               </button>
-              <p style={{ textAlign: 'center', marginTop: '1.25rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+              <p style={{ textAlign: 'center', marginTop: '1.25rem', color: 'var(--text-muted)', fontSize: '0.9rem', gridColumn: '1 / -1' }}>
                 Already have an account?{' '}
                 <a href="#" onClick={(e) => { e.preventDefault(); setMode('login'); setError(''); }}>Sign in</a>
               </p>

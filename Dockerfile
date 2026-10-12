@@ -21,7 +21,11 @@ WORKDIR /app/backend
 
 ENV FLASK_ENV=production
 ENV PORT=7860
+ENV PYTHONUNBUFFERED=1
+ENV MALLOC_ARENA_MAX=2
+ENV OMP_NUM_THREADS=2
+ENV MKL_NUM_THREADS=2
 
 EXPOSE 7860
 
-CMD ["gunicorn", "--bind", "0.0.0.0:7860", "--workers", "2", "--timeout", "120", "app:create_app()"]
+CMD ["gunicorn", "--bind", "0.0.0.0:7860", "--workers", "1", "--threads", "4", "--max-requests", "100", "--max-requests-jitter", "10", "--timeout", "120", "app:create_app()"]

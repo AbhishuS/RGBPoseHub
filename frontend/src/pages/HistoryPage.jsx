@@ -70,6 +70,25 @@ export default function HistoryPage() {
     }
   };
 
+  const handleRevokeSingleSession = async (user, sessionId) => {
+    if (!window.confirm(`Revoke this session for ${user.full_name || user.username}?`)) return;
+    setActionLoading(`revoke-sess-${sessionId}`);
+    try {
+      const res = await authAPI.revokeAdminSession(sessionId);
+      showSuccess(res.data?.message || 'Session revoked successfully');
+      setUsers((prev) => prev.map((u) => {
+        if (u.id !== user.id) return u;
+        const updatedSessions = (u.sessions || []).map((s) => s.id === sessionId ? { ...s, is_active: false } : s);
+        const newActiveCount = updatedSessions.filter((s) => s.is_active).length;
+        return { ...u, sessions: updatedSessions, active_sessions: newActiveCount };
+      }));
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not revoke session.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleDelete = async (user) => {
     if (!window.confirm(`Permanently delete account for ${user.full_name || user.username} (${user.email})? This cannot be undone.`)) return;
     setActionLoading(`delete-${user.id}`);
@@ -229,15 +248,30 @@ export default function HistoryPage() {
                       </h4>
                       {user.sessions?.length > 0 ? (
                         <div style={{ overflowX: 'auto', marginBottom: '1.25rem', borderRadius: 10, border: '1px solid var(--border-color)' }}>
-                          <table style={{ minWidth: 480 }}>
-                            <thead><tr><th>Status</th><th>Started</th><th>IP Address</th><th>Device / Browser</th></tr></thead>
+                          <table style={{ minWidth: 540 }}>
+                            <thead><tr><th>Status</th><th>Started</th><th>IP Address</th><th>Device / Browser</th><th>Action</th></tr></thead>
                             <tbody>
                               {user.sessions.slice(0, 10).map((s) => (
                                 <tr key={s.id}>
                                   <td><span style={{ display: 'flex', alignItems: 'center' }}><StatusDot active={s.is_active} /><span style={{ fontSize: '0.78rem', fontWeight: 600, color: s.is_active ? '#10b981' : 'var(--text-muted)' }}>{s.is_active ? 'Active' : 'Ended'}</span></span></td>
                                   <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem' }}>{fmt(s.created_at)}</td>
-                                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>{s.ip_address || '\u2014'}</td>
-                                  <td style={{ fontSize: '0.78rem', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.user_agent || '\u2014'}</td>
+                                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>{s.ip_address || '—'}</td>
+                                  <td style={{ fontSize: '0.78rem', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.user_agent || '—'}</td>
+                                  <td>
+                                    {s.is_active ? (
+                                      <button
+                                        className="btn btn-sm btn-danger"
+                                        style={{ padding: '0.2rem 0.55rem', fontSize: '0.72rem', borderRadius: 6 }}
+                                        disabled={actionLoading === `revoke-sess-${s.id}`}
+                                        onClick={() => handleRevokeSingleSession(user, s.id)}
+                                        title="Revoke this session"
+                                      >
+                                        {actionLoading === `revoke-sess-${s.id}` ? '...' : 'Revoke'}
+                                      </button>
+                                    ) : (
+                                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Revoked</span>
+                                    )}
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>

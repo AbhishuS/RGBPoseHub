@@ -336,6 +336,18 @@ def predict():
                      'top_confidence': results['predictions'][0].get('confidence_pct') if results.get('predictions') else None,
                  })
 
+    try:
+        user_rec = User.query.get(user_id)
+        if user_rec:
+            user_rec.total_analyses = (user_rec.total_analyses or 0) + 1
+            user_rec.total_uploads = (user_rec.total_uploads or 0) + 1
+            db.session.commit()
+    except Exception:
+        pass
+
+    import gc
+    gc.collect()
+
     return jsonify({
         'results': results,
         'original_image': original_b64,
@@ -507,6 +519,9 @@ def forensic_analyze():
     except Exception:
         pass
 
+    import gc
+    gc.collect()
+
     return jsonify(_sanitize_for_json({
         'forensics': forensic_results,
         'candidate_objects': candidate_objects,
@@ -660,6 +675,17 @@ def estimate_pose():
                      'confidence': pose_result.get('confidence_pct'),
                  })
 
+    try:
+        user_rec = User.query.get(user_id)
+        if user_rec:
+            user_rec.total_analyses = (user_rec.total_analyses or 0) + 1
+            db.session.commit()
+    except Exception:
+        pass
+
+    import gc
+    gc.collect()
+
     return jsonify(_sanitize_for_json({
         'pose_result': pose_result,
         'filename': filename,
@@ -770,16 +796,17 @@ def get_analyzed_image(filename):
 @ml_bp.route('/recent-analyses', methods=['GET'])
 @jwt_required()
 def get_user_recent_analyses():
-    """Returns the last 4 images analysed by the current user."""
+    """Returns the last 4 unique images analysed by the current user."""
     import json
     user_id = get_jwt_identity()
     analysis_actions = ['image_analysis', 'forensic_analysis', 'pose_estimation']
     logs = ActivityLog.query.filter(
         ActivityLog.user_id == user_id,
         ActivityLog.action.in_(analysis_actions)
-    ).order_by(ActivityLog.created_at.desc()).limit(4).all()
+    ).order_by(ActivityLog.created_at.desc()).limit(20).all()
 
     items = []
+    seen = set()
     for log in logs:
         meta = {}
         if log.metadata_json:
@@ -788,6 +815,10 @@ def get_user_recent_analyses():
             except Exception:
                 meta = {}
         fn = meta.get('filename')
+        key = fn or log.id
+        if key in seen:
+            continue
+        seen.add(key)
         items.append({
             'id': log.id,
             'action': log.action,
@@ -797,6 +828,8 @@ def get_user_recent_analyses():
             'created_at': _format_iso(log.created_at),
             'metadata': meta,
         })
+        if len(items) >= 4:
+            break
 
     return jsonify({'analyses': items}), 200
 

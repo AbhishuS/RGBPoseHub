@@ -13,11 +13,21 @@ export default function DashboardPage() {
   const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
-    loadDashboard();
+    loadDashboard(true);
+    const handleFocus = () => loadDashboard(false);
+    window.addEventListener('focus', handleFocus);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') loadDashboard(false);
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, []);
 
-  const loadDashboard = async () => {
-    setLoading(true);
+  const loadDashboard = async (showLoader = true) => {
+    if (showLoader) setLoading(true);
     try {
       const [statsRes, dataRes, mlRes, analysesRes] = await Promise.all([
         authAPI.getStats().catch(() => null),
@@ -40,7 +50,7 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('Dashboard load error:', err);
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
   };
 
@@ -88,9 +98,19 @@ export default function DashboardPage() {
 
   return (
     <div className="fade-in">
-      <div className="page-header" style={{ borderBottomColor: 'rgba(23, 105, 210, 0.12)' }}>
-        <h2 style={{ color: '#0f2b48', fontWeight: 800 }}>Dashboard</h2>
-        <p style={{ color: '#526374' }}>Overview of your RGB-Pose Hub activity, system status, and analyzed imagery</p>
+      <div className="page-header" style={{ borderBottomColor: 'rgba(23, 105, 210, 0.12)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h2 style={{ color: '#0f2b48', fontWeight: 800 }}>Dashboard</h2>
+          <p style={{ color: '#526374' }}>Overview of your RGB-Pose Hub activity, system status, and analyzed imagery</p>
+        </div>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => loadDashboard(true)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem' }}
+          title="Refresh dashboard metrics"
+        >
+          ↻ Refresh
+        </button>
       </div>
 
       <div className="page-body">
@@ -150,7 +170,20 @@ export default function DashboardPage() {
           </div>
 
           {/* Card 4: Active Sessions */}
-          <div className="stat-card">
+          <div
+            className="stat-card"
+            onClick={() => navigate('/profile')}
+            style={{
+              cursor: 'pointer',
+              position: 'relative',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              border: '1.5px solid rgba(124, 58, 237, 0.22)',
+            }}
+            title="Click to manage active sessions in Profile"
+          >
+            <div style={{ position: 'absolute', top: 10, right: 10, fontSize: '0.65rem', background: 'rgba(124, 58, 237, 0.1)', color: '#7c3aed', padding: '0.15rem 0.5rem', borderRadius: 999, fontWeight: 700 }}>
+              Manage ⚙️
+            </div>
             <div className="stat-icon purple">🟢</div>
             <div className="stat-info">
               <h4 style={{ color: '#7c3aed' }}>{stats?.active_sessions || 0}</h4>

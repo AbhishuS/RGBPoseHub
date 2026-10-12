@@ -1,0 +1,62 @@
+{
+  "indianthakran@gmail.com": {
+    "id": "d8cad421-8466-44ca-9f1b-0559a3cf428c",
+    "email": "indianthakran@gmail.com",
+    "username": "indianthakran",
+    "password_hash": "$2b$12$bFNlXkbCq8cLi10N5G1LKOeZzmI197nRNnApnVjkBEEJFxzYFm39K",
+    "full_name": "Hradayastha Thakran",
+    "role": "admin",
+    "is_active": true,
+    "is_2fa_enabled": true,
+    "total_analyses": 0,
+    "total_uploads": 0,
+    "created_at": "2026-10-12T09:27:13.915037",
+    "last_login_at": "2026-10-12T09:27:14.177603",
+    "two_factor": {
+      "id": "0e8706d4-6e0f-4386-a389-9c6416706740",
+      "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PX",
+      "is_verified": false,
+      "verified_at": null
+    }
+  },
+  "user2@example.com": {
+    "id": "0dc5f18c-6079-4d88-b5fe-1c3d40e25771",
+    "email": "user2@example.com",
+    "username": "user2",
+    "password_hash": "$2b$12$3qRMAPMsXh9VedfLWLkUguEZbnwSkgBpowWKk0VY.6fKySIyDk2ju",
+    "full_name": "user2",
+    "role": "researcher",
+    "is_active": true,
+    "is_2fa_enabled": true,
+    "total_analyses": 0,
+    "total_uploads": 0,
+    "created_at": "2026-10-12T09:26:35.040963",
+    "last_login_at": null,
+    "two_factor": {
+      "id": "1bcc08c3-5a1c-454a-bc53-e9d6ab731cee",
+      "secret": "BNMZ6WT4DNOOIVQQI756OWTYN3FTHLIJ",
+      "is_verified": true,
+      "verified_at": "2026-10-12T09:26:35.100891"
+    }
+  },
+  "researcher@example.com": {
+    "id": "cf23dccb-7154-4b85-bc9f-cf32de3734ae",
+    "email": "researcher@example.com",
+    "username": "researcher1",
+    "password_hash": "$2b$12$QPafQ7WykcBRcSI3d2sBXOyBGvXQgMQDzjnIZKZ9bTrhsoBHUNxHu",
+    "full_name": "Test Researcher",
+    "role": "researcher",
+    "is_active": true,
+    "is_2fa_enabled": false,
+    "total_analyses": 0,
+    "total_uploads": 0,
+    "created_at": "2026-10-12T09:26:35.791591",
+    "last_login_at": null,
+    "two_factor": {
+      "id": "1415b6c8-8884-4f1c-94d9-8ece1097e88e",
+      "secret": "P7OEU4DU2TWFUZBZCBQCJTYFS35BNHDJ",
+      "is_verified": false,
+      "verified_at": null
+    }
+  }
+}

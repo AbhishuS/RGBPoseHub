@@ -4,7 +4,8 @@ from datetime import timedelta
 class Config:
     """Base configuration."""
     SECRET_KEY = os.environ.get('SECRET_KEY', 'rgb-pose-hub-secret-key-2024-dev')
-    _db_url = os.environ.get('DATABASE_URL', 'sqlite:///../instance/rgbposehub.db')
+    _default_db = os.path.abspath(os.path.join(os.path.dirname(__file__), 'instance', 'rgbposehub.db')).replace('\\', '/')
+    _db_url = os.environ.get('DATABASE_URL') or f'sqlite:///{_default_db}'
     # Render (Heroku-style) issues postgres:// but SQLAlchemy 1.4+ needs postgresql://
     if _db_url.startswith('postgres://'):
         _db_url = _db_url.replace('postgres://', 'postgresql://', 1)

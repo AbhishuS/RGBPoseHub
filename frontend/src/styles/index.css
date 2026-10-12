@@ -1869,11 +1869,36 @@ tbody tr:hover td { background: var(--bg-secondary); }
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: 1.25rem;
-  row-gap: .8rem;
-  align-items: end;
+  row-gap: 1rem;
+  align-items: start;
   margin-top: 1.4rem;
+  width: 100%;
 }
-.login-card > form .form-group { margin: 0; }
+.login-card > form .form-group {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  text-align: left;
+}
+.login-card > form .form-group .form-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: #293d52;
+  text-align: left;
+}
+.login-card > form .form-group .form-input {
+  width: 100%;
+  min-height: 48px;
+  box-sizing: border-box;
+}
+.login-card > form > .auth-notice-banner,
+.login-card > form > div:not(.form-group) {
+  grid-column: 1 / -1;
+  width: 100%;
+}
 .login-card > form > .btn { grid-column: 1 / -1; width: min(100%, 540px); justify-self: center; margin-top: .35rem; }
 .login-card > form > p { grid-column: 1 / -1; }
 .login-card > form > .form-group:nth-of-type(1):last-of-type { grid-column: 1 / -1; }

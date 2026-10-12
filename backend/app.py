@@ -91,54 +91,27 @@ def create_app(config_name=None):
     def health_check():
         return {'status': 'ok', 'service': 'RGB-Pose Hub API', 'version': '2.0.0'}
 
-    # Create database tables and seed default accounts
+    # Cap PyTorch threads for 512MB RAM environment
+    try:
+        import torch
+        torch.set_num_threads(2)
+    except Exception:
+        pass
+
+    # Create database tables and seed/restore accounts
     with app.app_context():
         from module_auth.models import User, Session, ActivityLog, TwoFactorSecret
+        from module_auth.persistence import sync_users_on_startup
         db.create_all()
-        import bcrypt
 
         # Remove legacy demo accounts if present
         legacy_users = User.query.filter(User.email.in_(['admin@rgbposehub.org', 'lead_researcher@rgbposehub.org'])).all()
         for u in legacy_users:
             db.session.delete(u)
-
-        # Ensure admin account indianthakran@gmail.com exists with password Thakran@2005
-        pwd_hash = bcrypt.hashpw(b'Thakran@2005', bcrypt.gensalt()).decode('utf-8')
-        admin_user = User.query.filter_by(email='indianthakran@gmail.com').first()
-        if not admin_user:
-            admin_user = User(
-                id='d8cad421-8466-44ca-9f1b-0559a3cf428c',
-                email='indianthakran@gmail.com',
-                username='indianthakran',
-                password_hash=pwd_hash,
-                full_name='Hradayastha Thakran',
-                role='admin',
-                is_active=True,
-                is_2fa_enabled=True  # Admin requires TOTP like all users
-            )
-            db.session.add(admin_user)
-        else:
-            # Always reset password and role on startup
-            admin_user.password_hash = pwd_hash
-            admin_user.role = 'admin'
-            admin_user.is_active = True
-            admin_user.is_2fa_enabled = True  # Ensure TOTP is always required
-
-        # Seed a TOTP secret for admin if none exists
-        # Use a stable env-var secret so redeploys don't break the admin's authenticator app.
-        two_factor = TwoFactorSecret.query.filter_by(user_id=admin_user.id).first()
-        if not two_factor:
-            admin_secret = os.environ.get('ADMIN_TOTP_SECRET', 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PX')
-            two_factor = TwoFactorSecret(
-                id=str(__import__('uuid').uuid4()),
-                user_id=admin_user.id,
-                secret=admin_secret,
-                is_verified=False  # Will show QR on first login for setup
-            )
-            db.session.add(two_factor)
-        # If already verified, leave it alone — admin has already scanned the QR
-
         db.session.commit()
+
+        # Ensure admin indianthakran@gmail.com with Thakran@2005 & restore persistent accounts
+        sync_users_on_startup(db, User, TwoFactorSecret)
 
     return app
 

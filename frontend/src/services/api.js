@@ -108,6 +108,7 @@ export const authAPI = {
   getAdminUsers: () => api.get('/auth/admin/users'),
   deleteAdminUser: (id) => api.delete(`/auth/admin/users/${id}`),
   revokeAdminUserSessions: (id) => api.post(`/auth/admin/users/${id}/revoke-sessions`),
+  revokeAdminSession: (id) => api.post(`/auth/admin/sessions/${id}/revoke`),
 };
 
 
