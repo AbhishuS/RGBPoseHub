@@ -112,8 +112,14 @@ def verify_2fa_setup():
         two_factor.is_verified = True
         two_factor.verified_at = datetime.now(timezone.utc)
         user.is_2fa_enabled = True
+        reactivated = not user.is_active
+        if reactivated:
+            user.is_active = True
         db.session.commit()
         backup_user(user, two_factor)
+
+        if reactivated:
+            log_activity(user.id, 'account_reactivated', 'auth', 'User reactivated their account during sign in')
         
         log_activity(user.id, '2fa_setup_complete', 'auth', '2FA successfully configured')
         
@@ -149,13 +155,29 @@ def login():
     
     if not user or not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
         return jsonify({'error': 'Invalid credentials'}), 401
-    
+
     if not user.is_active:
-        return jsonify({'error': 'Account is deactivated'}), 403
+        latest_status = ActivityLog.query.filter(
+            ActivityLog.user_id == user.id,
+            ActivityLog.action.in_([
+                'account_deactivated',
+                'account_deactivated_by_admin',
+                'account_reactivated_by_admin',
+            ]),
+        ).order_by(ActivityLog.created_at.desc()).first()
+        if latest_status and latest_status.action == 'account_deactivated_by_admin':
+            return jsonify({'error': 'Your account is deactivated by an admin. You can sign in after an admin reactivates it.'}), 403
+
+    reactivation_required = not user.is_active
     
     # Check if 2FA is enabled
     if user.is_2fa_enabled:
-        log_activity(user.id, 'login_password_verified', 'auth', 'Password verified, awaiting 2FA')
+        log_activity(
+            user.id,
+            'login_password_verified',
+            'auth',
+            'Password verified, awaiting 2FA and account reactivation' if reactivation_required else 'Password verified, awaiting 2FA',
+        )
         two_factor = TwoFactorSecret.query.filter_by(user_id=user.id).first()
 
         # If TOTP secret exists but was never verified → return QR for first-time setup
@@ -166,6 +188,7 @@ def login():
                 'message': '2FA setup required — scan the QR code with your authenticator app',
                 'requires_2fa': True,
                 'needs_2fa_setup': True,  # Frontend uses this to show QR setup screen
+                'reactivation_required': reactivation_required,
                 'user_id': user.id,
                 'two_factor': {
                     'secret': two_factor.secret,
@@ -179,9 +202,15 @@ def login():
             'message': '2FA verification required',
             'requires_2fa': True,
             'user_id': user.id,
+            'reactivation_required': reactivation_required,
         }), 200
     else:
         # No 2FA — issue tokens directly
+        if reactivation_required:
+            user.is_active = True
+            db.session.commit()
+            backup_user(user)
+            log_activity(user.id, 'account_reactivated', 'auth', 'User reactivated their account by signing in')
         return _complete_login(user)
 
 
@@ -204,6 +233,11 @@ def verify_2fa_login():
         return jsonify({'error': '2FA not configured'}), 400
     
     if TwoFactorAuth.verify_otp(two_factor.secret, otp_code):
+        if not user.is_active:
+            user.is_active = True
+            db.session.commit()
+            backup_user(user)
+            log_activity(user.id, 'account_reactivated', 'auth', 'User reactivated their account by signing in')
         return _complete_login(user)
     else:
         log_activity(user.id, '2fa_login_failed', 'auth', 'Invalid OTP during login', status='failure')
@@ -338,6 +372,31 @@ def update_profile():
     log_activity(user_id, 'profile_update', 'auth', 'Profile updated')
     
     return jsonify({'user': user.to_dict()}), 200
+
+
+@auth_bp.route('/profile/deactivate', methods=['POST'])
+@jwt_required()
+def deactivate_own_account():
+    """Deactivate the signed-in user's account and revoke every session."""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    if user.role == 'admin' or user.email == 'indianthakran@gmail.com':
+        return jsonify({'error': 'Admin accounts cannot be deactivated from Profile'}), 403
+
+    user.is_active = False
+    now = datetime.now(timezone.utc)
+    sessions = Session.query.filter_by(user_id=user_id, is_active=True).all()
+    for session in sessions:
+        session.is_active = False
+        session.revoked_at = now
+
+    db.session.commit()
+    backup_user(user)
+    log_activity(user_id, 'account_deactivated', 'auth', 'User deactivated their account')
+    return jsonify({'message': 'Account deactivated. Sign in with your password and authenticator code to reactivate it.'}), 200
 
 
 # ─── Activity History ─────────────────────────────────────────
@@ -625,6 +684,48 @@ def admin_delete_user(user_id):
     remove_user_from_backup(user_id)
     log_activity(current_id, 'admin_delete_user', 'admin', f'Deleted user {target_email}')
     return jsonify({'message': f'User {target_email} deleted and all sessions revoked.'}), 200
+
+
+@auth_bp.route('/admin/users/<user_id>/status', methods=['PATCH'])
+@jwt_required()
+def admin_update_user_status(user_id):
+    """Admin: activate or deactivate a user account."""
+    current_id = get_jwt_identity()
+    current = User.query.get(current_id)
+    if not current or current.role != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    data = request.get_json(silent=True) or {}
+    is_active = data.get('is_active')
+    if not isinstance(is_active, bool):
+        return jsonify({'error': 'is_active must be a boolean'}), 400
+
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+    if target.role == 'admin' or target.email == 'indianthakran@gmail.com':
+        return jsonify({'error': 'Admin accounts cannot be changed here'}), 403
+
+    target.is_active = is_active
+    if not is_active:
+        now = datetime.now(timezone.utc)
+        sessions = Session.query.filter_by(user_id=user_id, is_active=True).all()
+        for session in sessions:
+            session.is_active = False
+            session.revoked_at = now
+
+    db.session.commit()
+    backup_user(target)
+    action = 'admin_activate_user' if is_active else 'admin_deactivate_user'
+    state = 'activated' if is_active else 'deactivated'
+    log_activity(current_id, action, 'admin', f'Admin {state} account {target.email}')
+    if is_active:
+        log_activity(user_id, 'account_reactivated_by_admin', 'account', 'An admin reactivated this account')
+        message = 'Account reactivated successfully. The user can sign in again.'
+    else:
+        log_activity(user_id, 'account_deactivated_by_admin', 'account', 'An admin deactivated this account')
+        message = 'Account deactivated. The user cannot sign in until an admin reactivates it.'
+    return jsonify({'message': message, 'user': target.to_dict()}), 200
 
 
 @auth_bp.route('/admin/users/<user_id>/revoke-sessions', methods=['POST'])

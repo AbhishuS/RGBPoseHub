@@ -7,7 +7,9 @@ export default function ProfilePage({ user, onLogout }) {
   const [profile, setProfile] = useState(user);
   const [editName, setEditName] = useState(user?.full_name || '');
   const [saving, setSaving] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
   const [message, setMessage] = useState('');
+  const [messageIsError, setMessageIsError] = useState(false);
 
   useEffect(() => {
     loadProfile();
@@ -33,6 +35,7 @@ export default function ProfilePage({ user, onLogout }) {
   const handleSave = async () => {
     setSaving(true);
     setMessage('');
+    setMessageIsError(false);
     try {
       const res = await authAPI.updateProfile({ full_name: editName });
       setProfile(res.data.user);
@@ -42,6 +45,23 @@ export default function ProfilePage({ user, onLogout }) {
       setMessage('Update failed');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDeactivateAccount = async () => {
+    if (!window.confirm('Deactivate your account? You will be signed out. To reactivate it, sign in again with your password and authenticator code.')) return;
+    setDeactivating(true);
+    setMessage('');
+    try {
+      await authAPI.deactivateOwnAccount();
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+      localStorage.removeItem('user');
+      onLogout();
+    } catch (err) {
+      setMessage(err.response?.data?.error || 'Could not deactivate your account.');
+      setMessageIsError(true);
+      setDeactivating(false);
     }
   };
 
@@ -74,7 +94,7 @@ export default function ProfilePage({ user, onLogout }) {
         <p>Manage your account, 2FA, and active sessions</p>
       </div>
       <div className="page-body">
-        {message && <div className="alert alert-success"> {message}</div>}
+        {message && <div className={`alert ${messageIsError ? 'alert-error' : 'alert-success'}`}> {message}</div>}
 
         <div className="profile-columns" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
           {/* Profile Info */}
@@ -135,6 +155,21 @@ export default function ProfilePage({ user, onLogout }) {
             <button className="btn btn-danger btn-sm" style={{ marginTop: '1.25rem' }} onClick={handleLogout}>
                Sign Out
             </button>
+            {profile?.role === 'admin' ? (
+              <p style={{ marginTop: '1.25rem', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                Admin accounts cannot be deactivated from Profile.
+              </p>
+            ) : (
+              <div style={{ marginTop: '1.5rem', paddingTop: '1.25rem', borderTop: '1px solid var(--border-color)' }}>
+                <h4 style={{ marginBottom: '0.5rem', color: '#b91c1c' }}>Deactivate Account</h4>
+                <p style={{ marginBottom: '0.85rem', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                  This signs you out and revokes all active sessions. Sign in again with your password and authenticator code to reactivate.
+                </p>
+                <button className="btn btn-danger btn-sm" onClick={handleDeactivateAccount} disabled={deactivating}>
+                  {deactivating ? 'Deactivating...' : 'Deactivate My Account'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

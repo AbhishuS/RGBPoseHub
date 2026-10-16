@@ -12,6 +12,7 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
   const [twoFAData, setTwoFAData] = useState(null);
   const [otpCode, setOtpCode] = useState(['', '', '', '', '', '']);
   const [pendingUserId, setPendingUserId] = useState(null);
+  const [pendingReactivation, setPendingReactivation] = useState(false);
   const [resetOtp, setResetOtp] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [notice, setNotice] = useState('');
@@ -99,6 +100,7 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
       });
       if (res.data.requires_2fa) {
         setPendingUserId(res.data.user_id);
+        setPendingReactivation(Boolean(res.data.reactivation_required));
         setOtpCode(['', '', '', '', '', '']);
         if (res.data.needs_2fa_setup && res.data.two_factor) {
           // First-time TOTP setup — show QR code to scan
@@ -118,6 +120,7 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
           localStorage.setItem('refresh_token', res.data.refresh_token);
         }
         localStorage.setItem('user', JSON.stringify(res.data.user));
+        setPendingReactivation(false);
         onLogin(res.data.user);
         navigate('/');
       }
@@ -146,6 +149,7 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
           localStorage.setItem('refresh_token', res.data.refresh_token);
         }
         localStorage.setItem('user', JSON.stringify(res.data.user));
+        setPendingReactivation(false);
         onLogin(res.data.user);
         navigate('/');
       } else {
@@ -177,6 +181,7 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
         localStorage.setItem('refresh_token', res.data.refresh_token);
       }
       localStorage.setItem('user', JSON.stringify(res.data.user));
+      setPendingReactivation(false);
       onLogin(res.data.user);
       navigate('/');
     } catch (err) {
@@ -305,6 +310,7 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
           {mode === '2fa-setup' && twoFAData && (
             <div style={{ textAlign: 'center' }}>
               <h3 style={{ marginBottom: '0.75rem', fontSize: '1.1rem' }}>Set Up Two-Factor Authentication</h3>
+              {pendingReactivation && <p className="alert alert-success">Verify your authenticator code to reactivate your account and sign in.</p>}
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>
                 Scan this QR code with Google Authenticator, Authy, or any TOTP app:
               </p>
@@ -332,9 +338,11 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
           {mode === '2fa-login' && (
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🔐</div>
-              <h3 style={{ marginBottom: '0.5rem', fontSize: '1.1rem' }}>Two-Factor Verification</h3>
+              <h3 style={{ marginBottom: '0.5rem', fontSize: '1.1rem' }}>{pendingReactivation ? 'Reactivate Account' : 'Two-Factor Verification'}</h3>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1.25rem', lineHeight: 1.5 }}>
-                Open your authenticator app (<strong>Google Authenticator</strong>, Authy, etc.) and enter the 6-digit code for <strong>RGB-Pose Hub</strong>.
+                {pendingReactivation
+                  ? <>Your account is deactivated. Verify your identity with the 6-digit code from your authenticator app to reactivate it and sign in.</>
+                  : <>Open your authenticator app (<strong>Google Authenticator</strong>, Authy, etc.) and enter the 6-digit code for <strong>RGB-Pose Hub</strong>.</>}
               </p>
               <div className="otp-inputs">
                 {otpCode.map((digit, i) => (
@@ -344,7 +352,7 @@ export default function LoginPage({ onLogin, isAdmin = false }) {
                 ))}
               </div>
               <button className="btn btn-primary btn-block" onClick={handleVerify2FALogin} disabled={loading}>
-                {loading ? <span className="spinner" /> : 'Verify & Sign In'}
+                {loading ? <span className="spinner" /> : pendingReactivation ? 'Reactivate & Sign In' : 'Verify & Sign In'}
               </button>
               <p style={{ marginTop: '1rem' }}>
                 <a href="#" onClick={(e) => { e.preventDefault(); setMode('login'); setOtpCode(['','','','','','']); setError(''); }}

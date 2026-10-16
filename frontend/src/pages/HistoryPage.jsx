@@ -70,6 +70,34 @@ export default function HistoryPage() {
     }
   };
 
+  const handleAccountStatus = async (user) => {
+    const nextStatus = !user.is_active;
+    const action = nextStatus ? 'reactivate' : 'deactivate';
+    const prompt = nextStatus
+      ? `Reactivate ${user.full_name || user.username}? They will be able to sign in again.`
+      : `Deactivate ${user.full_name || user.username}? This will revoke all of their active sessions.`;
+    if (!window.confirm(prompt)) return;
+
+    setActionLoading(`status-${user.id}`);
+    setError('');
+    try {
+      const res = await authAPI.setAdminUserStatus(user.id, nextStatus);
+      setUsers((prev) => prev.map((u) => u.id === user.id
+        ? {
+          ...u,
+          is_active: nextStatus,
+          active_sessions: nextStatus ? u.active_sessions : 0,
+          sessions: nextStatus ? u.sessions : (u.sessions || []).map((s) => ({ ...s, is_active: false })),
+        }
+        : u));
+      showSuccess(res.data.message);
+    } catch (err) {
+      setError(err.response?.data?.error || `Could not ${action} account.`);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleRevokeSingleSession = async (user, sessionId) => {
     if (!window.confirm(`Revoke this session for ${user.full_name || user.username}?`)) return;
     setActionLoading(`revoke-sess-${sessionId}`);
@@ -202,6 +230,17 @@ export default function HistoryPage() {
                       </button>
                       {!isAdmin && (
                         <>
+                          <button
+                            className={`btn btn-sm ${user.is_active ? 'btn-secondary' : 'btn-primary'}`}
+                            disabled={actionLoading === `status-${user.id}`}
+                            onClick={() => handleAccountStatus(user)}
+                            style={{ borderRadius: 8 }}
+                            title={user.is_active ? 'Deactivate this account and revoke its sessions' : 'Reactivate this account'}
+                          >
+                            {actionLoading === `status-${user.id}`
+                              ? (user.is_active ? 'Deactivating...' : 'Reactivating...')
+                              : (user.is_active ? 'Deactivate Account' : 'Reactivate Account')}
+                          </button>
                           <button
                             className="btn btn-sm"
                             disabled={!hasActive || actionLoading === `revoke-${user.id}`}

@@ -3,20 +3,20 @@
     "id": "d8cad421-8466-44ca-9f1b-0559a3cf428c",
     "email": "indianthakran@gmail.com",
     "username": "indianthakran",
-    "password_hash": "$2b$12$bFNlXkbCq8cLi10N5G1LKOeZzmI197nRNnApnVjkBEEJFxzYFm39K",
+    "password_hash": "$2b$12$WYA7evmRgta.plx/TEVcNORpNlLQxExdDKvrxWPyYTkWfGyr9B51S",
     "full_name": "Hradayastha Thakran",
     "role": "admin",
     "is_active": true,
     "is_2fa_enabled": true,
     "total_analyses": 0,
     "total_uploads": 0,
-    "created_at": "2026-10-12T09:27:13.915037",
-    "last_login_at": "2026-10-12T09:27:14.177603",
+    "created_at": "2026-10-14T19:12:51.412480",
+    "last_login_at": "2026-10-15T12:24:44.281121",
     "two_factor": {
-      "id": "0e8706d4-6e0f-4386-a389-9c6416706740",
+      "id": "d7761642-5c27-4e7c-aa06-36c5e7003843",
       "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PX",
-      "is_verified": false,
-      "verified_at": null
+      "is_verified": true,
+      "verified_at": "2026-10-15T12:24:44.245996"
     }
   },
   "user2@example.com": {
@@ -57,6 +57,26 @@
       "secret": "P7OEU4DU2TWFUZBZCBQCJTYFS35BNHDJ",
       "is_verified": false,
       "verified_at": null
+    }
+  },
+  "lavishtemani1@gmail.com": {
+    "id": "3bc0208d-f2aa-468c-84ca-d0a68115c1ac",
+    "email": "lavishtemani1@gmail.com",
+    "username": "Lavish",
+    "password_hash": "$2b$12$rrbO4sSY3P9PsAB1c/osiOEsJETx1TFfc2UqQV4wuJNBUYoMYR6vi",
+    "full_name": "Lavish Temani",
+    "role": "researcher",
+    "is_active": false,
+    "is_2fa_enabled": true,
+    "total_analyses": 0,
+    "total_uploads": 0,
+    "created_at": "2026-10-15T12:33:35.740854",
+    "last_login_at": "2026-10-16T12:39:03.363667",
+    "two_factor": {
+      "id": "dad2490e-6d4a-4864-875d-941bda51c722",
+      "secret": "RTWJN5XFJBVP66VTYRDXSSQYG5NCCGJJ",
+      "is_verified": true,
+      "verified_at": "2026-10-15T12:33:53.927638"
     }
   }
 }
