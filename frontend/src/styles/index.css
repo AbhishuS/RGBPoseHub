@@ -2019,14 +2019,12 @@ tbody tr:hover td { background: var(--bg-secondary); }
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.project-banner-history { display: grid; grid-template-columns: 48px minmax(0, 1fr); }
-.project-banner-history .project-banner-team {
-  grid-column: 1 / -1;
-  width: 100%;
-  margin-left: 0;
+/* Neutralized legacy history banner override */
+.project-banner-history {
+  display: block !important;
+  width: auto !important;
 }
-.project-banner-history .project-banner-team > div { justify-content: flex-start; }
-.project-banner-history .project-team-chip { white-space: normal; overflow-wrap: anywhere; }
+
 @media (max-width: 768px) {
   .project-banner { padding: .9rem 1rem; }
 }
@@ -2262,3 +2260,877 @@ tbody tr:hover td { background: var(--bg-secondary); }
   .object-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   DIGITAL BRAND IDENTITY MANUAL (DBIM) & GIGW 3.0 COMPLIANCE SUITE
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ─── DBIM Section 8: Adherence to Accessibility (Font Scaling & High Contrast) ─── */
+html[data-font-scale="small"]  { font-size: 88% !important; }
+html[data-font-scale="normal"] { font-size: 100% !important; }
+html[data-font-scale="large"]  { font-size: 112% !important; }
+html[data-font-scale="xlarge"] { font-size: 125% !important; }
+
+/* Enhanced Focus Ring for Keyboard & Accessibility Users (DBIM §8.2) */
+html[data-focus-ring="enhanced"] *:focus,
+html[data-focus-ring="enhanced"] *:focus-visible,
+html[data-focus-ring="enhanced"] button:focus,
+html[data-focus-ring="enhanced"] input:focus,
+html[data-focus-ring="enhanced"] a:focus {
+  outline: 3px solid #0284c7 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 5px rgba(2, 132, 199, 0.45) !important;
+}
+
+html[data-focus-ring="enhanced"] button:hover,
+html[data-focus-ring="enhanced"] .nav-item:hover,
+html[data-focus-ring="enhanced"] input:hover,
+html[data-focus-ring="enhanced"] .dbim-search-trigger:hover,
+html[data-focus-ring="enhanced"] .card:hover,
+html[data-focus-ring="enhanced"] .stat-card:hover {
+  outline: 2px dashed #0284c7 !important;
+  outline-offset: 2px !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   WCAG 2.1 AAA HIGH CONTRAST THEME (DBIM §2.2 & §8.1)
+   ═══════════════════════════════════════════════════════════════════════ */
+html[data-contrast="high"] {
+  --bg-primary:      #0b1120 !important;
+  --bg-secondary:    #020617 !important;
+  --bg-tertiary:     #0f172a !important;
+  --bg-card:         #0b1120 !important;
+  --bg-card-hover:   #1e293b !important;
+  --bg-input:        #020617 !important;
+  --border-color:    #38bdf8 !important;
+  --border:          #38bdf8 !important;
+  --text-primary:    #ffffff !important;
+  --text-secondary:  #f1f5f9 !important;
+  --text-muted:      #cbd5e1 !important;
+  --accent-primary:  #38bdf8 !important;
+  --code-bg:         #020617 !important;
+}
+
+html[data-contrast="high"] body,
+html[data-contrast="high"] .app-layout,
+html[data-contrast="high"] .main-content {
+  background: #020617 !important;
+  color: #ffffff !important;
+}
+
+/* Force high contrast text on all headings and typography */
+html[data-contrast="high"] h1,
+html[data-contrast="high"] h2,
+html[data-contrast="high"] h3,
+html[data-contrast="high"] h4,
+html[data-contrast="high"] h5,
+html[data-contrast="high"] h6,
+html[data-contrast="high"] strong,
+html[data-contrast="high"] b,
+html[data-contrast="high"] .page-header h2,
+html[data-contrast="high"] .page-header-text h2,
+html[data-contrast="high"] .project-banner-copy h1,
+html[data-contrast="high"] .sidebar-brand h1 {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
+html[data-contrast="high"] p,
+html[data-contrast="high"] span,
+html[data-contrast="high"] label,
+html[data-contrast="high"] td,
+html[data-contrast="high"] th,
+html[data-contrast="high"] .page-header p,
+html[data-contrast="high"] .page-header-text p,
+html[data-contrast="high"] .project-banner-guidance,
+html[data-contrast="high"] .sidebar-user-name {
+  color: #f1f5f9 !important;
+}
+
+/* Card and Container high contrast borders and solid dark backgrounds */
+html[data-contrast="high"] .card,
+html[data-contrast="high"] .card-glass,
+html[data-contrast="high"] .stat-card,
+html[data-contrast="high"] .object-card,
+html[data-contrast="high"] .project-banner,
+html[data-contrast="high"] .sidebar,
+html[data-contrast="high"] .page-header,
+html[data-contrast="high"] .table-container,
+html[data-contrast="high"] .upload-zone,
+html[data-contrast="high"] .pose-results-shell,
+html[data-contrast="high"] .explore-demo,
+html[data-contrast="high"] .explore-card {
+  background: #0b1120 !important;
+  border: 2px solid #38bdf8 !important;
+  box-shadow: 0 0 0 1px #0284c7 !important;
+}
+
+/* High contrast navigation */
+html[data-contrast="high"] .nav-item {
+  color: #ffffff !important;
+}
+html[data-contrast="high"] .nav-item:hover,
+html[data-contrast="high"] .nav-item.active {
+  background: #1e293b !important;
+  color: #38bdf8 !important;
+  border: 1px solid #38bdf8 !important;
+}
+
+/* High contrast buttons */
+html[data-contrast="high"] .btn-primary,
+html[data-contrast="high"] .landing-button-primary {
+  background: #0284c7 !important;
+  color: #ffffff !important;
+  border: 2px solid #ffffff !important;
+  font-weight: 700 !important;
+}
+
+html[data-contrast="high"] .btn-secondary,
+html[data-contrast="high"] button:not(.btn-primary) {
+  background: #1e293b !important;
+  color: #ffffff !important;
+  border: 1.5px solid #94a3b8 !important;
+}
+
+html[data-contrast="high"] .btn-secondary:hover {
+  background: #334155 !important;
+  border-color: #38bdf8 !important;
+}
+
+/* High contrast inputs */
+html[data-contrast="high"] input,
+html[data-contrast="high"] select,
+html[data-contrast="high"] textarea,
+html[data-contrast="high"] .form-input {
+  background: #020617 !important;
+  color: #ffffff !important;
+  border: 2px solid #38bdf8 !important;
+}
+
+/* High contrast search and cookie components */
+html[data-contrast="high"] .dbim-search-trigger {
+  background: #0b1120 !important;
+  border: 2px solid #38bdf8 !important;
+  color: #ffffff !important;
+}
+html[data-contrast="high"] .dbim-search-placeholder {
+  color: #cbd5e1 !important;
+}
+html[data-contrast="high"] .dbim-search-kbd {
+  background: #1e293b !important;
+  color: #38bdf8 !important;
+  border: 1px solid #38bdf8 !important;
+}
+html[data-contrast="high"] .dbim-search-modal {
+  background: #0b1120 !important;
+  border: 2px solid #38bdf8 !important;
+  color: #ffffff !important;
+}
+html[data-contrast="high"] .dbim-search-header {
+  border-bottom: 2px solid #1e293b !important;
+}
+html[data-contrast="high"] .dbim-search-input {
+  color: #ffffff !important;
+}
+html[data-contrast="high"] .dbim-search-item:hover,
+html[data-contrast="high"] .dbim-search-item.selected {
+  background: #1e293b !important;
+}
+html[data-contrast="high"] .dbim-search-footer {
+  background: #020617 !important;
+  border-top: 1px solid #1e293b !important;
+  color: #cbd5e1 !important;
+}
+html[data-contrast="high"] .dbim-accessibility-bar {
+  background: #0b1120 !important;
+  border: 2px solid #38bdf8 !important;
+}
+html[data-contrast="high"] .dbim-a11y-btn {
+  background: #1e293b !important;
+  color: #ffffff !important;
+  border: 1px solid #64748b !important;
+}
+html[data-contrast="high"] .dbim-a11y-btn.active {
+  background: #0284c7 !important;
+  border-color: #38bdf8 !important;
+  color: #ffffff !important;
+}
+html[data-contrast="high"] .dbim-cookie-banner,
+html[data-contrast="high"] .dbim-cookie-modal {
+  background: #0b1120 !important;
+  border: 2px solid #38bdf8 !important;
+  color: #ffffff !important;
+}
+html[data-contrast="high"] .dbim-cookie-item {
+  background: #131c31 !important;
+  border: 1px solid #38bdf8 !important;
+}
+
+/* ─── Accessibility Toolbar Styling (DBIM §8) ─── */
+.dbim-accessibility-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(14, 116, 144, 0.18);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+}
+
+.dbim-a11y-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+}
+
+.dbim-a11y-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #087fae;
+  letter-spacing: 0.05em;
+  margin-right: 0.1rem;
+}
+
+.dbim-a11y-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+
+.dbim-a11y-btn:hover {
+  background: #f1fbff;
+  border-color: #087fae;
+  color: #087fae;
+}
+
+.dbim-a11y-btn.active {
+  background: #087fae;
+  border-color: #087fae;
+  color: #ffffff;
+}
+
+.dbim-contrast-btn {
+  padding: 0.2rem 0.5rem;
+}
+
+.dbim-a11y-separator {
+  width: 1px;
+  height: 14px;
+  background: rgba(0, 0, 0, 0.12);
+  margin: 0 0.2rem;
+}
+
+/* ─── Project Header Layout Enhancements ─── */
+.project-banner {
+  display: block !important;
+  width: auto !important;
+  box-sizing: border-box !important;
+}
+
+.project-banner-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.project-banner-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: 240px;
+}
+
+.project-banner-guidance {
+  margin: 0.15rem 0 0 0;
+  color: #6b7d8c;
+  font-size: 0.74rem;
+}
+
+.project-banner-team {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.project-banner-chips-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+/* Row 2: Search Bar on Left, Contrast/Accessibility on Right */
+.project-banner-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(8, 127, 174, 0.12);
+  flex-wrap: wrap;
+}
+
+.project-banner-search-col {
+  flex: 1 1 300px;
+  max-width: 520px;
+}
+
+.project-banner-a11y-col {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.project-team-chip {
+  padding: .3rem .58rem;
+  border: 1px solid rgba(105, 185, 211, .2);
+  border-radius: 999px;
+  background: rgba(255,255,255,.66);
+  color: #506779;
+  font-size: .68rem;
+  font-weight: 600;
+  white-space: nowrap !important;
+  display: inline-block !important;
+}
+
+/* ─── DBIM Section 9: Universal Search Bar & Command Palette ─── */
+.dbim-search-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(8, 127, 174, 0.22);
+  border-radius: 999px;
+  padding: 0.45rem 0.95rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(8, 127, 174, 0.05);
+}
+
+.dbim-search-trigger:hover {
+  background: #ffffff;
+  border-color: #087fae;
+  box-shadow: 0 4px 16px rgba(8, 127, 174, 0.14);
+}
+
+.dbim-search-placeholder {
+  flex: 1;
+  font-size: 0.78rem;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dbim-search-kbd {
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-family: inherit;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  color: #475569;
+  box-shadow: 0 1px 0 #94a3b8;
+}
+
+/* Search Modal Overlay */
+.dbim-search-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100000 !important;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+  animation: fadeInModal 0.18s ease-out;
+}
+
+.dbim-search-modal {
+  position: relative;
+  z-index: 100001 !important;
+  width: 92%;
+  max-width: 650px;
+  background: #ffffff;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 75vh;
+}
+
+.dbim-search-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.95rem 1.25rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.dbim-search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 1.02rem;
+  color: #1e293b;
+  background: transparent;
+  font-family: inherit;
+}
+
+.dbim-search-input::placeholder {
+  color: #94a3b8;
+}
+
+.dbim-search-close {
+  background: #f1f5f9;
+  border: none;
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  font-size: 0.78rem;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.dbim-search-close:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.dbim-search-results {
+  padding: 0.6rem 0.75rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.dbim-search-section-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+  padding: 0.5rem 0.6rem 0.3rem;
+}
+
+.dbim-search-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  gap: 0.8rem;
+}
+
+.dbim-search-item:hover,
+.dbim-search-item.selected {
+  background: #f0f9ff;
+}
+
+.dbim-search-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.dbim-search-item-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.15rem;
+}
+
+.dbim-search-item-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.dbim-search-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.dbim-search-item-desc {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dbim-search-action-btn {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #0284c7;
+  white-space: nowrap;
+}
+
+.dbim-search-empty {
+  padding: 2rem 1.5rem;
+  text-align: center;
+  color: #64748b;
+}
+
+.dbim-search-suggestion-label {
+  display: block;
+  font-size: 0.75rem;
+  margin: 0.75rem 0 0.5rem;
+}
+
+.dbim-search-chips {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.dbim-search-chips button {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  color: #0369a1;
+  cursor: pointer;
+}
+
+.dbim-search-chips button:hover {
+  background: #e0f2fe;
+}
+
+.dbim-search-footer {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.65rem 1.25rem;
+  border-top: 1px solid #f1f5f9;
+  background: #f8fafc;
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.dbim-search-footer kbd {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.68rem;
+}
+
+/* ─── DBIM Section 7.6: Cookie & Privacy Consent Notice & Modal ─── */
+.dbim-cookie-banner {
+  position: fixed;
+  bottom: 1.25rem;
+  right: 1.5rem;
+  left: 1.5rem;
+  max-width: 900px;
+  margin: 0 auto;
+  z-index: 9990;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(8, 127, 174, 0.28);
+  border-radius: 16px;
+  padding: 1rem 1.4rem;
+  box-shadow: 0 15px 45px rgba(0, 0, 0, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  animation: slideUpBanner 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dbim-cookie-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex: 1 1 400px;
+}
+
+.dbim-cookie-banner-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(8, 127, 174, 0.1);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.dbim-cookie-banner-text h4 {
+  margin: 0 0 0.2rem 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.dbim-cookie-banner-text p {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.dbim-cookie-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.dbim-cookie-btn {
+  padding: 0.45rem 0.95rem;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: none;
+}
+
+.dbim-cookie-btn-primary {
+  background: #0284c7;
+  color: #ffffff;
+}
+
+.dbim-cookie-btn-primary:hover {
+  background: #0369a1;
+}
+
+.dbim-cookie-btn-outline {
+  background: transparent;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+}
+
+.dbim-cookie-btn-outline:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.dbim-cookie-btn-secondary {
+  background: #f1f5f9;
+  color: #0369a1;
+}
+
+.dbim-cookie-btn-secondary:hover {
+  background: #e0f2fe;
+}
+
+/* Cookie Settings Modal */
+.dbim-cookie-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100000 !important;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  animation: fadeInModal 0.2s ease-out;
+}
+
+.dbim-cookie-modal {
+  position: relative;
+  z-index: 100001 !important;
+  width: 100%;
+  max-width: 600px;
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 1.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.35);
+}
+
+.dbim-cookie-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.dbim-cookie-modal-header h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.dbim-cookie-close-btn {
+  background: #f1f5f9;
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: #64748b;
+}
+
+.dbim-cookie-modal-subtitle {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin: 0 0 1.25rem 0;
+  line-height: 1.45;
+}
+
+.dbim-cookie-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-bottom: 1.5rem;
+}
+
+.dbim-cookie-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.dbim-cookie-item-main {
+  flex: 1;
+}
+
+.dbim-cookie-item-main strong {
+  display: block;
+  font-size: 0.85rem;
+  color: #1e293b;
+  margin-bottom: 0.25rem;
+}
+
+.dbim-cookie-pill-always {
+  display: inline-block;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  margin-left: 0.4rem;
+  text-transform: uppercase;
+}
+
+.dbim-cookie-item-main p {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+/* Switch styling */
+.dbim-switch-label {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  margin-top: 0.2rem;
+}
+
+.dbim-switch-label input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.dbim-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: #cbd5e1;
+  transition: 0.2s;
+  border-radius: 999px;
+}
+
+.dbim-slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.2s;
+  border-radius: 50%;
+}
+
+.dbim-switch-label input:checked + .dbim-slider {
+  background-color: #0284c7;
+}
+
+.dbim-switch-label input:checked + .dbim-slider:before {
+  transform: translateX(18px);
+}
+
+.dbim-cookie-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+@keyframes fadeInModal {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideUpBanner {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Responsive banner fixes */
+@media (max-width: 900px) {
+  .project-banner-main-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.85rem;
+  }
+  .project-banner-search-col {
+    max-width: 100%;
+  }
+  .project-banner-team > div {
+    justify-content: flex-start;
+  }
+}

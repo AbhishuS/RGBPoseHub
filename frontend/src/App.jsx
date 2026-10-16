@@ -13,17 +13,30 @@ import AboutPage from './pages/AboutPage';
 import ProjectHeader from './components/ProjectHeader';
 import { authAPI } from './services/api';
 import { isAdminUser, normalizeUserRole } from './utils/auth';
+import CookieConsentModal from './components/CookieConsentModal';
+import AccessibilityToolbar from './components/AccessibilityToolbar';
 import './styles/index.css';
 
-function LoginScreen({ onLogin, isAdmin = false }) {
+function LoginScreen({ onLogin, isAdmin = false, onOpenCookies }) {
   return (
     <div className="auth-screen" style={{ position: 'relative', width: '100%', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <LiquidChrome />
+      <div style={{ position: 'absolute', top: 12, right: 16, zIndex: 10 }}>
+        <AccessibilityToolbar inline={true} />
+      </div>
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <LoginPage onLogin={onLogin} isAdmin={isAdmin} />
       </div>
       <footer className="site-legal-footer">
         <span>&copy; {new Date().getFullYear()} RGB PoseHub</span>
+        <span>NITK Surathkal · IT303</span>
+        <button
+          type="button"
+          onClick={onOpenCookies}
+          style={{ background: 'none', border: 'none', color: '#0284c7', cursor: 'pointer', fontSize: 'inherit', textDecoration: 'underline' }}
+        >
+          Cookie Preferences (DBIM §7.6)
+        </button>
         <span>Contact: <a href="mailto:indianthakran@gmail.com">indianthakran@gmail.com</a></span>
       </footer>
     </div>
@@ -40,6 +53,7 @@ export default function App() {
     }
   });
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [cookieModalOpen, setCookieModalOpen] = useState(false);
 
   const handleLogin = (userData) => {
     const normalizedUser = normalizeUserRole(userData);
@@ -80,13 +94,16 @@ export default function App() {
 
   return (
     <Router>
+      {/* Global DBIM Cookie Management Banner & Modal */}
+      <CookieConsentModal forceOpen={cookieModalOpen} onClose={() => setCookieModalOpen(false)} />
+
       {!user ? (
         <>
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/about" element={<AboutPage />} />
-            <Route path="/login" element={<LoginScreen onLogin={handleLogin} isAdmin={false} />} />
-            <Route path="/admin/login" element={<LoginScreen onLogin={handleLogin} isAdmin={true} />} />
+            <Route path="/login" element={<LoginScreen onLogin={handleLogin} isAdmin={false} onOpenCookies={() => setCookieModalOpen(true)} />} />
+            <Route path="/admin/login" element={<LoginScreen onLogin={handleLogin} isAdmin={true} onOpenCookies={() => setCookieModalOpen(true)} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </>
@@ -127,20 +144,46 @@ export default function App() {
               </Routes>
             </div>
             
+            {/* DBIM Section 5.6: Footer Compliance */}
             <footer style={{
-              padding: '1rem 1.5rem',
+              padding: '1.25rem 2rem',
               textAlign: 'center',
-              borderTop: '1px solid rgba(0,0,0,0.05)',
+              borderTop: '1px solid rgba(0,0,0,0.06)',
               marginTop: 'auto',
-              color: '#666',
+              color: 'var(--text-secondary, #666)',
               fontSize: '0.8rem',
               display: 'flex',
-              justifyContent: 'center',
+              alignItems: 'center',
+              justifyContent: 'space-between',
               gap: '1.5rem',
               flexWrap: 'wrap',
+              background: 'rgba(255,255,255,0.7)',
+              backdropFilter: 'blur(10px)',
             }}>
-              <span>&copy; {new Date().getFullYear()} RGB PoseHub</span>
-              <span>Contact: <a href="mailto:indianthakran@gmail.com" style={{ color: '#0284c7', textDecoration: 'none' }}>indianthakran@gmail.com</a></span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <span>&copy; {new Date().getFullYear()} <strong>RGB PoseHub</strong> · NITK Surathkal (IT303)</span>
+                <span style={{ color: '#059669', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#059669' }} /> GIGW 3.0 & DBIM Compliant
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => setCookieModalOpen(true)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#087fae',
+                    cursor: 'pointer',
+                    fontSize: 'inherit',
+                    textDecoration: 'underline',
+                    padding: 0,
+                  }}
+                >
+                  Cookie Preferences (DBIM §7.6)
+                </button>
+                <span>Contact: <a href="mailto:indianthakran@gmail.com" style={{ color: '#087fae', textDecoration: 'none' }}>indianthakran@gmail.com</a></span>
+              </div>
             </footer>
           </main>
         </div>
